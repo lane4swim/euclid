@@ -10,6 +10,7 @@
   --accent-soft: #dcebf6;
   --danger: #b3261e;
   --invalid: #8a8a85;
+  --text-later: #6a6a65;
   --focus: #0060a0;
   --canvas: #ffffff;
   --shadow: 0 2px 10px rgb(0 0 0 / 0.12);
@@ -29,6 +30,7 @@
     --accent-soft: #1d3646;
     --danger: #ff8a80;
     --invalid: #7d7d78;
+    --text-later: #9c9c96;
     --focus: #6cc0ef;
     --canvas: #121211;
     --shadow: 0 2px 12px rgb(0 0 0 / 0.5);
@@ -48,6 +50,7 @@
   --accent-soft: #1d3646;
   --danger: #ff8a80;
   --invalid: #7d7d78;
+  --text-later: #9c9c96;
   --focus: #6cc0ef;
   --canvas: #121211;
   --shadow: 0 2px 12px rgb(0 0 0 / 0.5);
@@ -251,6 +254,9 @@ main {
 .step-list li.current { border-left-color: var(--accent); }
 .step-list li.muted .text { color: var(--text-muted); }
 .step-list li.invalid .num, .step-list li.invalid .text { color: var(--invalid); }
+/* Steps after the selected one: lighter (still at least 4.5:1 contrast). */
+.step-list li.later .num, .step-list li.later .text, .step-list li.later .text b { color: var(--text-later); font-weight: 500; }
+.step-list li.later .actions { opacity: 0.4; }
 .step-list li.hidden-obj .text { opacity: 0.6; }
 .num { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .text b { font-style: italic; font-weight: 650; }

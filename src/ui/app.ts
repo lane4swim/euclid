@@ -165,7 +165,7 @@ function draw(): void {
   const hover = ui.hover && (ui.hover.kind === "point" || ui.hover.kind === "curve" || ui.hover.kind === "segment") ? ui.hover.id : null;
   svg.innerHTML = drawSVG(engine, {
     view: ui.view, width: w, height: h, palette: palette(), infiniteLines: ui.settings.showInfiniteLines,
-    interactive: true, hover, highlight: hl, current: last, ghost: ghost(),
+    interactive: true, hover, highlight: hl, current: last, ghost: ghost(), fadeAfter: focusIndex(),
     snap: ui.hover?.kind === "snap" ? ui.hover.snap.pos
       : ui.hover && (ui.hover.kind === "curve" || ui.hover.kind === "segment") && takesPoints() ? hitPos(ui.hover) ?? null : null,
     candidates: ui.candidates.map((c) => ({ pos: c.pos, n: c.pick + 1, hover: ui.hover?.kind === "candidate" && ui.hover.pick === c.pick })),
@@ -324,12 +324,29 @@ function cancelPick(): void {
   scheduleDraw();
 }
 
+/**
+ * Index of the selected step in the object list, if a step (not A or B) is selected:
+ * the steps after it are shown lighter in the list and faded in the drawing.
+ */
+function focusIndex(): number | null {
+  const i = ui.selected ? engine.indexOf(ui.selected) : -1;
+  return i >= 2 ? i : null;
+}
+
+/** Selection-dependent classes of the step rows: selected, and later than the selected step. */
+function updateRowStates(): void {
+  const focus = focusIndex();
+  for (const li of stepList.querySelectorAll<HTMLElement>("li[data-id]")) {
+    const id = li.dataset.id!;
+    li.classList.toggle("selected", id === ui.selected);
+    li.setAttribute("aria-selected", String(id === ui.selected));
+    li.classList.toggle("later", focus !== null && engine.indexOf(id) > focus);
+  }
+}
+
 function select(id: ID | null): void {
   ui.selected = id;
-  for (const li of stepList.querySelectorAll<HTMLElement>("li[data-id]")) {
-    li.classList.toggle("selected", li.dataset.id === id);
-    li.setAttribute("aria-selected", String(li.dataset.id === id));
-  }
+  updateRowStates();
   if (id) stepList.querySelector<HTMLElement>(`li[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
   scheduleDraw();
 }
@@ -739,6 +756,7 @@ function renderSteps(): void {
     return li;
   });
   stepList.replaceChildren(...items);
+  updateRowStates();
 }
 
 function partsToNodes(parts: { text: string; slot?: string }[]): Node[] {
