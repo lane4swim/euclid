@@ -284,6 +284,14 @@ main {
 .swatch::-webkit-color-swatch { border: none; border-radius: 3px; }
 .swatch::-moz-color-swatch { border: none; border-radius: 3px; }
 
+.actions select.width {
+  min-height: 26px;
+  padding: 1px 4px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+@media (pointer: coarse) { .actions select.width { min-height: 36px; } }
+
 .rename {
   width: 100%;
   font: inherit;

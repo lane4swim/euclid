@@ -21,6 +21,7 @@ export interface ViewFlags {
   visible: boolean;
   color: string;
   arcMode?: boolean;
+  width?: number;                          // lines, circles, segments: stroke width in px; absent = default
 }
 
 interface Base<T extends string, D> {
@@ -38,7 +39,7 @@ export type SegmentObject = Base<"segment", SegmentDef>;
 export type GeoObject = PointObject | LineObject | CircleObject | SegmentObject;
 export type ObjectType = GeoObject["type"];
 
-export type InvalidReason = "parallel" | "no-intersection" | "zero-radius" | "coincident" | "dependency";
+export type InvalidReason = "parallel" | "no-intersection" | "zero-radius" | "coincident" | "dependency" | "outside-segment";
 
 export interface Derived {
   valid: boolean;
@@ -46,6 +47,7 @@ export interface Derived {
   pos?: Vec;
   line?: { origin: Vec; dir: Vec };
   circle?: { center: Vec; r: number };
+  segment?: { length: number };            // segments: `line` runs p1 -> p2, the segment is t in [0, length]
   usedPoints?: ID[];
   arc?: { start: number; end: number };
   span?: { tMin: number; tMax: number };
@@ -67,6 +69,14 @@ export interface SavedFile {
   cursor: number;
 }
 
+/** Default stroke widths in screen pixels, and the allowed range for `ViewFlags.width`. */
+export const DEFAULT_WIDTH = { line: 1.6, circle: 1.6, segment: 1.25 } as const;
+export const MIN_WIDTH = 0.25;
+export const MAX_WIDTH = 12;
+
+export const hasWidth = (type: ObjectType): type is "line" | "circle" | "segment" => type !== "point";
+export const isValidWidth = (w: unknown): w is number => typeof w === "number" && Number.isFinite(w) && w >= MIN_WIDTH && w <= MAX_WIDTH;
+
 /** Ids named in an object's definition. */
 export function deps(obj: GeoObject): ID[] {
   switch (obj.type) {
@@ -82,5 +92,7 @@ export function deps(obj: GeoObject): ID[] {
   }
 }
 
-export const isCurve = (o: GeoObject): o is LineObject | CircleObject =>
-  o.type === "line" || o.type === "circle";
+/** Objects that can be intersected. Segments count, but only points on the segment itself. */
+export type CurveObject = LineObject | CircleObject | SegmentObject;
+export const isCurve = (o: GeoObject): o is CurveObject =>
+  o.type === "line" || o.type === "circle" || o.type === "segment";
