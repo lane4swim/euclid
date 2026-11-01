@@ -257,6 +257,10 @@ main {
 /* Steps after the selected one: lighter (still at least 4.5:1 contrast). */
 .step-list li.later .num, .step-list li.later .text, .step-list li.later .text b { color: var(--text-later); font-weight: 500; }
 .step-list li.later .actions { opacity: 0.4; }
+
+/* The row after the last step: selecting it shows the final figure. */
+.step-list li.final-step { margin-top: 4px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.step-list li.final-step .text { font-style: italic; }
 .step-list li.hidden-obj .text { opacity: 0.6; }
 .num { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .text b { font-style: italic; font-weight: 650; }

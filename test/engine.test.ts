@@ -447,3 +447,24 @@ test("a point on a circle survives the circle degenerating and returns", () => {
   assert.ok(e.derived.get(Q)!.valid);
   assert.ok(Math.abs(e.pos(Q)!.x + 1) < 1e-9 && Math.abs(e.pos(Q)!.y - 2) < 1e-9);
 });
+
+test("final flag: set on any object, undo/redo, save/load, validation", () => {
+  const { e, k1, C } = vesica();
+  assert.deepEqual(e.finalIds(), []);
+  e.setFinal(C, true);
+  e.setFinal("A", true);
+  e.setFinal(k1, true);
+  assert.deepEqual(e.finalIds(), ["A", k1, C]);
+  e.setFinal(k1, true); // no-op, no history entry
+  e.undo();
+  assert.deepEqual(e.finalIds(), ["A", C]);
+  e.redo();
+  e.setFinal("A", false);
+  assert.equal("final" in e.get("A")!.view, false, "unmarking removes the field");
+  const f = val(Engine.fromJSON(JSON.stringify(e.toJSON())));
+  assert.deepEqual(f.finalIds(), [k1, C]);
+  const bad = e.toJSON() as any;
+  bad.objects[2].view.final = "yes";
+  const r = Engine.fromJSON(bad);
+  assert.ok(!r.ok && /final must be true or false/.test(r.detail ?? ""));
+});

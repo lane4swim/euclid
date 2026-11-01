@@ -56,6 +56,7 @@ interface ViewFlags {
   color: string;                           // CSS color
   arcMode?: boolean;                       // circles only: false = full circle (default)
   width?: number;                          // lines, circles, segments: stroke width in px (0.25–12); absent = default
+  final?: boolean;                         // part of the final figure; absent = false
 }
 
 interface GeoObject {
@@ -156,6 +157,8 @@ class Engine {
   setColor(id: ID, color: string): void;
   setArcMode(circle: ID, arcMode: boolean): void;
   setWidth(id: ID, width: number): void;                  // lines, circles, segments
+  setFinal(id: ID, final: boolean): void;                 // any object, including A and B
+  finalIds(): ID[];
   remove(id: ID): Result<ID[]>;                           // returns all ids removed with it
   dependentsOf(id: ID): ID[];                             // for the confirm dialog
 
