@@ -1,0 +1,86 @@
+// Data model types. See spec.md, "Data model".
+
+import type { Vec } from "./kernel.js";
+
+export type { Vec };
+export type ID = string;
+
+export type PointDef =
+  | { kind: "given"; pos: Vec }
+  | { kind: "intersection"; a: ID; b: ID; pick: 0 | 1 };
+
+export interface LineDef { p1: ID; p2: ID }
+
+export type CircleDef =
+  | { kind: "throughPoint"; center: ID; through: ID }
+  | { kind: "radiusFromPoints"; center: ID; r1: ID; r2: ID };
+
+export interface SegmentDef { p1: ID; p2: ID }
+
+export interface ViewFlags {
+  visible: boolean;
+  color: string;
+  arcMode?: boolean;
+}
+
+interface Base<T extends string, D> {
+  id: ID;
+  type: T;
+  label: string;
+  def: D;
+  view: ViewFlags;
+}
+
+export type PointObject = Base<"point", PointDef>;
+export type LineObject = Base<"line", LineDef>;
+export type CircleObject = Base<"circle", CircleDef>;
+export type SegmentObject = Base<"segment", SegmentDef>;
+export type GeoObject = PointObject | LineObject | CircleObject | SegmentObject;
+export type ObjectType = GeoObject["type"];
+
+export type InvalidReason = "parallel" | "no-intersection" | "zero-radius" | "coincident" | "dependency";
+
+export interface Derived {
+  valid: boolean;
+  reason?: InvalidReason;
+  pos?: Vec;
+  line?: { origin: Vec; dir: Vec };
+  circle?: { center: Vec; r: number };
+  usedPoints?: ID[];
+  arc?: { start: number; end: number };
+  span?: { tMin: number; tMax: number };
+}
+
+export type ErrorCode =
+  | "same-point" | "zero-radius" | "no-intersection" | "coincident"
+  | "duplicate" | "unknown-id" | "bad-label" | "not-a-curve"
+  | "protected" | "bad-file";
+
+export type Result<T> =
+  | { ok: true; value: T; duplicate?: boolean }
+  | { ok: false; error: ErrorCode; ids?: ID[]; detail?: string };
+
+export interface SavedFile {
+  format: "compass-construction";
+  version: 1;
+  objects: GeoObject[];
+  cursor: number;
+}
+
+/** Ids named in an object's definition. */
+export function deps(obj: GeoObject): ID[] {
+  switch (obj.type) {
+    case "point":
+      return obj.def.kind === "given" ? [] : [obj.def.a, obj.def.b];
+    case "line":
+    case "segment":
+      return [obj.def.p1, obj.def.p2];
+    case "circle":
+      return obj.def.kind === "throughPoint"
+        ? [obj.def.center, obj.def.through]
+        : [obj.def.center, obj.def.r1, obj.def.r2];
+  }
+}
+
+export const isCurve = (o: GeoObject): o is LineObject | CircleObject =>
+  o.type === "line" || o.type === "circle";

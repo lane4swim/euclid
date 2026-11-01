@@ -1,0 +1,16 @@
+{
+  "name": "euclid",
+  "version": "0.1.0",
+  "description": "Straightedge-and-compass construction site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "tsc -p tsconfig.json && node --test dist/test/*.test.js",
+    "serve": "npm run build && python3 -m http.server -d site 8080"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "5.9.3"
+  }
+}
