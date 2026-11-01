@@ -49,6 +49,9 @@ const stepList = $<HTMLOListElement>("step-list");
 const givenEl = $<HTMLElement>("given");
 const emptyEl = $<HTMLElement>("no-steps");
 const statusEl = $<HTMLElement>("status");
+const stepperEl = $<HTMLElement>("stepper");
+const stepperCount = $<HTMLElement>("stepper-count");
+const stepperDesc = $<HTMLElement>("stepper-desc");
 const toastEl = $<HTMLElement>("toast");
 const nameField = $<HTMLInputElement>("name-field");
 const fileInput = $<HTMLInputElement>("file-input");
@@ -68,6 +71,8 @@ const ui = {
   selected: null as ID | null,
   /** The "final figure" row after the last step is selected: non-final objects are shown lighter. */
   finalView: false,
+  /** Step-through mode: the step shown (0 = the given points), or null when off. */
+  stepThrough: null as number | null,
   highlightStep: null as ID | null,
   flash: new Set<ID>(),
   view: { origin: { x: 0, y: 0 }, scale: 100 } as View,
@@ -159,15 +164,15 @@ function draw(): void {
   if (ui.selected) hl.add(ui.selected);
   for (const p of ui.picked) if ("id" in p) hl.add(p.id);
   if (ui.candidateCurves) ui.candidateCurves.forEach((id) => hl.add(id));
-  if (ui.highlightStep) {
-    const o = engine.get(ui.highlightStep);
-    if (o) { hl.add(o.id); deps(o).forEach((d) => hl.add(d)); }
-  }
-  const last = engine.cursor > 2 ? engine.objects[engine.cursor - 1].id : null;
+  const stepObj = ui.stepThrough ? engine.objects[ui.stepThrough + 1] : null; // step k is objects[k + 1]
+  const focusObj = stepObj ?? (ui.highlightStep ? engine.get(ui.highlightStep) : null);
+  if (focusObj) { hl.add(focusObj.id); deps(focusObj).forEach((d) => hl.add(d)); }
+  const last = stepObj ? stepObj.id : engine.cursor > 2 ? engine.objects[engine.cursor - 1].id : null;
   const hover = ui.hover && (ui.hover.kind === "point" || ui.hover.kind === "curve" || ui.hover.kind === "segment") ? ui.hover.id : null;
   svg.innerHTML = drawSVG(engine, {
     view: ui.view, width: w, height: h, palette: palette(), infiniteLines: ui.settings.showInfiniteLines,
     interactive: true, hover, highlight: hl, current: last, ghost: ghost(), fadeAfter: focusIndex(), fadeNonFinal: ui.finalView,
+    hideAfter: ui.stepThrough === null ? null : ui.stepThrough + 1,
     snap: ui.hover?.kind === "snap" ? ui.hover.snap.pos
       : ui.hover && (ui.hover.kind === "curve" || ui.hover.kind === "segment") && takesPoints() ? hitPos(ui.hover) ?? null : null,
     candidates: ui.candidates.map((c) => ({ pos: c.pos, n: c.pick + 1, hover: ui.hover?.kind === "candidate" && ui.hover.pick === c.pick })),
@@ -311,6 +316,7 @@ function showError(r: { error: ErrorCode; ids?: ID[]; detail?: string }): void {
 // ------------------------------------------------------------------ tools
 
 function setTool(tool: Tool): void {
+  if (ui.stepThrough !== null) stopStepThrough();
   ui.tool = tool;
   cancelPick();
   for (const b of document.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
@@ -331,6 +337,7 @@ function cancelPick(): void {
  * the steps after it are shown lighter in the list and faded in the drawing.
  */
 function focusIndex(): number | null {
+  if (ui.stepThrough !== null) return ui.stepThrough + 1;
   const i = ui.selected ? engine.indexOf(ui.selected) : -1;
   return i >= 2 ? i : null;
 }
@@ -343,20 +350,102 @@ function updateRowStates(): void {
   const focus = focusIndex();
   for (const li of stepList.querySelectorAll<HTMLElement>("li[data-id]")) {
     const id = li.dataset.id!;
-    li.classList.toggle("selected", id === ui.selected);
-    li.setAttribute("aria-selected", String(id === ui.selected));
+    const sel = ui.stepThrough !== null ? engine.indexOf(id) === ui.stepThrough + 1 : id === ui.selected;
+    li.classList.toggle("selected", sel);
+    li.setAttribute("aria-selected", String(sel));
     const lighter = ui.finalView ? !engine.get(id)?.view.final : focus !== null && engine.indexOf(id) > focus;
     li.classList.toggle("later", lighter);
   }
   const finalRow = stepList.querySelector<HTMLElement>("li.final-step");
   if (finalRow) {
+    finalRow.classList.toggle("later", ui.stepThrough !== null);
     finalRow.classList.toggle("selected", ui.finalView);
     finalRow.setAttribute("aria-selected", String(ui.finalView));
   }
 }
 
+// ------------------------------------------------------------ step-through
+
+const stepCount = () => engine.cursor - 2;
+
+/** Start stepping through the construction: at the selected step, or at the given points. */
+function startStepThrough(): void {
+  if (nameTarget) closeNameField(true);
+  const i = ui.selected ? engine.indexOf(ui.selected) : -1;
+  const start = i >= 2 ? i - 1 : 0;
+  ui.tool = "move";
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-tool]")) b.setAttribute("aria-pressed", "false");
+  cancelPick();
+  ui.selected = null;
+  ui.finalView = false;
+  ui.hover = null;
+  stepTo(start);
+}
+
+function stopStepThrough(): void {
+  ui.stepThrough = null;
+  renderStepper();
+  updateRowStates();
+  updateStatus();
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-tool]")) b.setAttribute("aria-pressed", String(b.dataset.tool === ui.tool));
+  scheduleDraw();
+}
+
+/** Show the construction up to step k (0 = only the given points). */
+function stepTo(k: number): void {
+  ui.stepThrough = Math.max(0, Math.min(stepCount(), k));
+  renderStepper();
+  updateRowStates();
+  const obj = engine.objects[ui.stepThrough + 1];
+  if (ui.stepThrough > 0 && obj) stepList.querySelector<HTMLElement>(`li[data-id="${CSS.escape(obj.id)}"]`)?.scrollIntoView({ block: "nearest" });
+  scheduleDraw();
+}
+
+/** The step bar: position, sentence of the current step, button states. */
+function renderStepper(): void {
+  const on = ui.stepThrough !== null;
+  stepperEl.hidden = !on;
+  statusEl.hidden = on;
+  $<HTMLButtonElement>("btn-step-through").setAttribute("aria-pressed", String(on));
+  if (!on) return;
+  const k = ui.stepThrough!, n = stepCount(), lang = ui.settings.lang;
+  if (k === 0) {
+    stepperCount.textContent = t("ui.stepStart", { n: String(n) });
+    stepperDesc.replaceChildren(...partsToNodes(formatParts(lang, "step.given", { a: label("A"), b: label("B") })));
+  } else {
+    stepperCount.textContent = t("ui.stepCount", { k: String(k), n: String(n) });
+    const s = engine.steps(lang)[k - 1];
+    stepperDesc.replaceChildren(...partsToNodes(s.parts));
+    if (!s.valid && s.reason) {
+      const r = document.createElement("span");
+      r.className = "reason";
+      r.textContent = ` (${t("ui.invalid", { reason: t(`reason.${s.reason}` as MessageId) })})`;
+      stepperDesc.append(r);
+    }
+  }
+  for (const b of stepperEl.querySelectorAll<HTMLButtonElement>("[data-step]")) {
+    const what = b.dataset.step;
+    if (what === "first" || what === "prev") b.disabled = k === 0;
+    if (what === "next" || what === "last") b.disabled = k === n;
+  }
+}
+
+stepperEl.querySelectorAll<HTMLButtonElement>("[data-step]").forEach((b) => {
+  b.addEventListener("click", () => {
+    const k = ui.stepThrough ?? 0;
+    switch (b.dataset.step) {
+      case "first": stepTo(0); break;
+      case "prev": stepTo(k - 1); break;
+      case "next": stepTo(k + 1); break;
+      case "last": stepTo(stepCount()); break;
+      case "close": stopStepThrough(); break;
+    }
+  });
+});
+
 /** Select the "final figure" row, after the last step. */
 function selectFinal(): void {
+  if (ui.stepThrough !== null) stopStepThrough();
   ui.selected = null;
   ui.finalView = true;
   updateRowStates();
@@ -371,6 +460,12 @@ function toggleFinal(id: ID): void {
 }
 
 function select(id: ID | null): void {
+  if (ui.stepThrough !== null) {
+    // While stepping, choosing a step's object jumps there; anything else is ignored.
+    const i = id ? engine.indexOf(id) : -1;
+    if (i >= 2) stepTo(i - 1);
+    return;
+  }
   ui.selected = id;
   ui.finalView = false;
   updateRowStates();
@@ -542,6 +637,11 @@ svg.addEventListener("pointerdown", (ev) => {
     return;
   }
   if (pointers.size > 2) return;
+  if (ui.stepThrough !== null) {
+    // Step-through is read-only: dragging only pans.
+    gesture = { kind: "pan", start: q, origin: { ...ui.view.origin }, moved: false, hit: null, place: false };
+    return;
+  }
   const hit = hitTest(q, ev.pointerType !== "mouse");
   if (ui.tool === "move") {
     if (hit?.kind === "point" && engine.isDraggable(hit.id)) {
@@ -589,7 +689,7 @@ svg.addEventListener("pointermove", (ev) => {
     }
     return;
   }
-  if (ev.pointerType === "mouse") {
+  if (ev.pointerType === "mouse" && ui.stepThrough === null) {
     const hit = hitTest(q, false);
     ui.hover = hit && allowed(hit) ? hit : null;
   }
@@ -826,6 +926,10 @@ function partsToNodes(parts: { text: string; slot?: string }[]): Node[] {
 let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 function onEngineChange(kind: string): void {
   snapCache = null;
+  if (ui.stepThrough !== null) {
+    ui.stepThrough = Math.min(ui.stepThrough, stepCount());
+    renderStepper();
+  }
   if (ui.picked.some((p) => "id" in p && !engine.derived.get(p.id)?.valid)) { ui.picked = []; }
   if (ui.selected && !engine.get(ui.selected)) ui.selected = null;
   if (ui.candidateCurves) {
@@ -947,6 +1051,7 @@ function applyLanguage(): void {
   svg.setAttribute("aria-label", t("ui.drawing"));
   nameField.setAttribute("aria-label", t("ui.name"));
   langSel.value = lang;
+  renderStepper();
   engine.labelLang = lang;
   updateStatus();
   renderSteps();
@@ -966,6 +1071,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => {
 });
 
 const actions: Record<string, () => void> = {
+  "step-through": () => (ui.stepThrough === null ? startStepThrough() : stopStepThrough()),
   undo: () => engine.undo(),
   redo: () => engine.redo(),
   new: () => { cancelPick(); select(null); engine.reset(); fit(); },
@@ -1005,10 +1111,20 @@ document.addEventListener("keydown", (ev) => {
   if (mod && key === "z") { ev.preventDefault(); if (ev.shiftKey) engine.redo(); else engine.undo(); return; }
   if (mod && key === "y") { ev.preventDefault(); engine.redo(); return; }
   if (mod || ev.altKey) return;
+  if (ui.stepThrough !== null) {
+    const k = ui.stepThrough;
+    const go: Record<string, number> = {
+      ArrowRight: k + 1, ArrowDown: k + 1, PageDown: k + 1, " ": k + 1,
+      ArrowLeft: k - 1, ArrowUp: k - 1, PageUp: k - 1, Home: 0, End: stepCount(),
+    };
+    if (ev.key in go && !(ev.key === " " && tgt && ["BUTTON", "LI", "SUMMARY"].includes(tgt.tagName))) { ev.preventDefault(); stepTo(go[ev.key]); return; }
+    if (ev.key === "Escape") { ev.preventDefault(); stopStepThrough(); return; }
+  }
   if (/^[1-7]$/.test(ev.key)) { setTool(TOOLS[Number(ev.key) - 1]); return; }
   if (ev.key === "Escape") { cancelPick(); select(null); exportMenu.open = false; return; }
   if ((ev.key === "Delete" || ev.key === "Backspace") && ui.selected) { ev.preventDefault(); removeObject(ui.selected); return; }
   if (key === "f") { fit(); return; }
+  if (key === "s" && ui.stepThrough === null) { startStepThrough(); return; }
   if (key === "m" && ui.selected) { toggleFinal(ui.selected); return; }
 });
 

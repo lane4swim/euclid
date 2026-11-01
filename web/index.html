@@ -74,6 +74,10 @@
     <div class="group" role="group">
       <label class="check"><input type="checkbox" id="infinite"> <span data-i18n="ui.infinite">Geraden unendlich</span></label>
       <button type="button" data-action="fit" data-kbd="F" data-i18n-title="ui.fit"><span data-i18n="ui.fit">Einpassen</span></button>
+      <button type="button" id="btn-step-through" data-action="step-through" data-kbd="S" data-i18n-title="ui.stepThrough" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14l9-7z"/><path d="M18 5v14"/></svg>
+        <span data-i18n="ui.stepThrough">Schritt für Schritt</span>
+      </button>
     </div>
 
     <div class="group settings" role="group">
@@ -97,6 +101,17 @@
     <section id="canvas-wrap" class="canvas-wrap">
       <svg id="drawing" role="img" tabindex="0" aria-label="Zeichenfläche"></svg>
       <p id="status" class="status" aria-live="polite"></p>
+      <div id="stepper" class="stepper" role="region" data-i18n-title="ui.stepper" hidden>
+        <button type="button" class="icon" data-step="first" data-i18n-title="ui.stepFirst"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M18 5l-9 7 9 7z"/></svg></button>
+        <button type="button" class="icon" data-step="prev" data-i18n-title="ui.stepPrev"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <div class="stepper-text">
+          <span id="stepper-count" class="stepper-count"></span>
+          <span id="stepper-desc" class="stepper-desc" aria-live="polite"></span>
+        </div>
+        <button type="button" class="icon" data-step="next" data-i18n-title="ui.stepNext"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+        <button type="button" class="icon" data-step="last" data-i18n-title="ui.stepLast"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="M6 5l9 7-9 7z"/></svg></button>
+        <button type="button" class="icon" data-step="close" data-i18n-title="ui.stepClose"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
       <p id="toast" class="toast" role="status" aria-live="assertive" hidden></p>
       <input id="name-field" class="name-field" type="text" maxlength="24" spellcheck="false" autocomplete="off" hidden>
     </section>
