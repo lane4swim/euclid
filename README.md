@@ -8,7 +8,7 @@ The geometry kernel, engine and browser UI are implemented. The UI includes:
 
 - seven tools (keys 1–7), including a Point tool for arbitrary points, with hover, snapping to unmarked intersections, dashed ghost previews, and numbered candidates for choosing between two intersections;
 - dragging A, B and arbitrary points with live updates, pan by dragging empty space, zoom with the wheel or a pinch;
-- the step list with show/hide, rename, color, line width, arc/full toggle, and delete (with confirmation when other steps depend on the object);
+- the step list with show/hide, rename, color, line width, arc/full toggle, a final-figure flag (and a "Final figure" row that shows the marked result), and delete (with confirmation when other steps depend on the object);
 - undo/redo, JSON save/open, SVG and PNG export (white or transparent background), step-list export as Markdown or HTML with the drawing, and autosave in the browser;
 - German and English, and light, dark and automatic themes.
 
@@ -62,5 +62,6 @@ These are choices the spec leaves open. Each one is easy to change.
 - **Arbitrary points** come in two kinds. `free` points sit anywhere in the plane. `onCurve` points are attached to a line, circle or segment and stored as a parameter: the fraction from p1 to p2 on lines and segments (clamped on segments), or the angle from the circle's reference direction (center → through point, or r1 → r2 for a rigid circle). They therefore follow their curve when A or B moves, and dragging them slides them along it. The Point tool creates either kind, depending on whether you click empty space or a curve. In the Line, Circle and Segment tools, the same clicks create the point and use it, so an arbitrary line takes two clicks. A ring marks the spot on a curve before you click. The Point tool is key 7 so keys 1–6 keep their spec meaning.
 - **Drags** discard the redo region, like any other new change. Moves to the current position are ignored.
 - **Selected step.** Steps after the selected one are shown lighter: in the list with a dedicated text color (`--text-later`, at least 4.5:1 contrast on every row background in both themes), and on the drawing at 28% opacity. Exports never fade anything.
+- **Final figure.** `view.final` marks objects as part of the result; it is only stored when true. The "Final figure" row after the last step uses the same lighter style as later steps for everything not marked. A and B have no row of their own, so they are marked by selecting them and pressing `M`.
 - **Snapped points in the line, circle and segment tools** become their own steps just before the new curve. If the curve is refused (for example as a duplicate), those points are undone again.
 - **Performance.** With 111 objects, a recompute takes about 0.3 ms under Node, well inside a 60 fps frame.

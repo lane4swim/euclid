@@ -345,6 +345,22 @@ export class Engine {
     if (o && o.view.color !== color) this.mutate("edit", [id], () => { this.get(id)!.view.color = color; });
   }
 
+  /** Mark an object as part of the final figure, or remove the mark. Any object type, including A and B. */
+  setFinal(id: ID, final: boolean): void {
+    const o = this.get(id);
+    if (!o || !!o.view.final === final) return;
+    this.mutate("edit", [id], () => {
+      const v = this.get(id)!.view;
+      if (final) v.final = true;
+      else delete v.final;
+    });
+  }
+
+  /** Ids of the active objects marked as part of the final figure, in step order. */
+  finalIds(): ID[] {
+    return this.active.filter((o) => o.view.final).map((o) => o.id);
+  }
+
   setArcMode(circle: ID, arcMode: boolean): void {
     const o = this.get(circle);
     if (o && o.type === "circle" && !!o.view.arcMode !== arcMode) this.mutate("edit", [circle], () => { this.get(circle)!.view.arcMode = arcMode; });
@@ -843,10 +859,12 @@ export function validateFile(data: unknown): { objects: GeoObject[]; cursor: num
     if (!isObj(def)) return `${where} (${id}): definition missing`;
     if (!isObj(view) || typeof view.visible !== "boolean" || !isStr(view.color)) return `${where} (${id}): view flags invalid`;
     if (view.arcMode !== undefined && typeof view.arcMode !== "boolean") return `${where} (${id}): arcMode invalid`;
+    if (view.final !== undefined && typeof view.final !== "boolean") return `${where} (${id}): final must be true or false`;
     if (view.width !== undefined && (type === "point" || !isValidWidth(view.width))) return `${where} (${id}): width invalid`;
     const cleanView = {
       visible: view.visible, color: view.color,
       ...(type === "circle" ? { arcMode: !!view.arcMode } : {}),
+      ...(view.final === true ? { final: true } : {}),
       ...(view.width !== undefined ? { width: view.width as number } : {}),
     };
 

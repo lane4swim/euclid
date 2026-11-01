@@ -66,6 +66,8 @@ const ui = {
   candidates: [] as { pick: 0 | 1; pos: Vec }[],
   candidateCurves: null as [ID, ID] | null,
   selected: null as ID | null,
+  /** The "final figure" row after the last step is selected: non-final objects are shown lighter. */
+  finalView: false,
   highlightStep: null as ID | null,
   flash: new Set<ID>(),
   view: { origin: { x: 0, y: 0 }, scale: 100 } as View,
@@ -165,7 +167,7 @@ function draw(): void {
   const hover = ui.hover && (ui.hover.kind === "point" || ui.hover.kind === "curve" || ui.hover.kind === "segment") ? ui.hover.id : null;
   svg.innerHTML = drawSVG(engine, {
     view: ui.view, width: w, height: h, palette: palette(), infiniteLines: ui.settings.showInfiniteLines,
-    interactive: true, hover, highlight: hl, current: last, ghost: ghost(), fadeAfter: focusIndex(),
+    interactive: true, hover, highlight: hl, current: last, ghost: ghost(), fadeAfter: focusIndex(), fadeNonFinal: ui.finalView,
     snap: ui.hover?.kind === "snap" ? ui.hover.snap.pos
       : ui.hover && (ui.hover.kind === "curve" || ui.hover.kind === "segment") && takesPoints() ? hitPos(ui.hover) ?? null : null,
     candidates: ui.candidates.map((c) => ({ pos: c.pos, n: c.pick + 1, hover: ui.hover?.kind === "candidate" && ui.hover.pick === c.pick })),
@@ -333,19 +335,44 @@ function focusIndex(): number | null {
   return i >= 2 ? i : null;
 }
 
-/** Selection-dependent classes of the step rows: selected, and later than the selected step. */
+/**
+ * Selection-dependent classes of the step rows: selected, and shown lighter —
+ * either later than the selected step, or (in the final view) not part of the final figure.
+ */
 function updateRowStates(): void {
   const focus = focusIndex();
   for (const li of stepList.querySelectorAll<HTMLElement>("li[data-id]")) {
     const id = li.dataset.id!;
     li.classList.toggle("selected", id === ui.selected);
     li.setAttribute("aria-selected", String(id === ui.selected));
-    li.classList.toggle("later", focus !== null && engine.indexOf(id) > focus);
+    const lighter = ui.finalView ? !engine.get(id)?.view.final : focus !== null && engine.indexOf(id) > focus;
+    li.classList.toggle("later", lighter);
   }
+  const finalRow = stepList.querySelector<HTMLElement>("li.final-step");
+  if (finalRow) {
+    finalRow.classList.toggle("selected", ui.finalView);
+    finalRow.setAttribute("aria-selected", String(ui.finalView));
+  }
+}
+
+/** Select the "final figure" row, after the last step. */
+function selectFinal(): void {
+  ui.selected = null;
+  ui.finalView = true;
+  updateRowStates();
+  stepList.querySelector<HTMLElement>("li.final-step")?.scrollIntoView({ block: "nearest" });
+  scheduleDraw();
+}
+
+/** Toggle the final-figure mark of an object (row flag button, or key M for the selected object). */
+function toggleFinal(id: ID): void {
+  const o = engine.get(id);
+  if (o) engine.setFinal(id, !o.view.final);
 }
 
 function select(id: ID | null): void {
   ui.selected = id;
+  ui.finalView = false;
   updateRowStates();
   if (id) stepList.querySelector<HTMLElement>(`li[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
   scheduleDraw();
@@ -608,6 +635,8 @@ new ResizeObserver(() => scheduleDraw()).observe(wrap);
 // --------------------------------------------------------------- step list
 
 const ICONS = {
+  flag: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4"/><path d="M6 4h11l-2.5 4 2.5 4H6"/></svg>',
+  flagOn: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4"/><path d="M6 4h11l-2.5 4 2.5 4H6z" class="fill"/></svg>',
   eye: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
   eyeOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>',
   pencil: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>',
@@ -741,6 +770,8 @@ function renderSteps(): void {
       const arc = !!o.view.arcMode;
       actions.append(iconButton(arc ? ICONS.full : ICONS.arc, t(arc ? "ui.fullMode" : "ui.arcMode"), () => engine.setArcMode(o.id, !arc), arc));
     }
+    const fin = !!o.view.final;
+    actions.append(iconButton(fin ? ICONS.flagOn : ICONS.flag, t(fin ? "ui.unmarkFinal" : "ui.markFinal"), () => toggleFinal(o.id), fin));
     actions.append(iconButton(ICONS.trash, t("ui.delete"), () => removeObject(o.id)));
 
     li.append(num, text, actions);
@@ -755,8 +786,30 @@ function renderSteps(): void {
     });
     return li;
   });
+  if (steps.length) items.push(finalRow(steps.length + 1));
   stepList.replaceChildren(...items);
   updateRowStates();
+}
+
+/** The row after the last step: selecting it shows the final figure (non-final objects lighter). */
+function finalRow(number: number): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "final-step";
+  li.tabIndex = 0;
+  li.setAttribute("role", "option");
+  const num = document.createElement("span");
+  num.className = "num";
+  num.textContent = `${number}.`;
+  const text = document.createElement("span");
+  text.className = "text";
+  const count = engine.finalIds().length;
+  text.textContent = count ? t("ui.finalStep", { count: String(count) }) : t("ui.finalStepEmpty");
+  li.append(num, text);
+  li.addEventListener("click", selectFinal);
+  li.addEventListener("keydown", (ev) => {
+    if (ev.target === li && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); selectFinal(); }
+  });
+  return li;
 }
 
 function partsToNodes(parts: { text: string; slot?: string }[]): Node[] {
@@ -955,7 +1008,8 @@ document.addEventListener("keydown", (ev) => {
   if (/^[1-7]$/.test(ev.key)) { setTool(TOOLS[Number(ev.key) - 1]); return; }
   if (ev.key === "Escape") { cancelPick(); select(null); exportMenu.open = false; return; }
   if ((ev.key === "Delete" || ev.key === "Backspace") && ui.selected) { ev.preventDefault(); removeObject(ui.selected); return; }
-  if (key === "f") { fit(); }
+  if (key === "f") { fit(); return; }
+  if (key === "m" && ui.selected) { toggleFinal(ui.selected); return; }
 });
 
 // ------------------------------------------------------------------ start

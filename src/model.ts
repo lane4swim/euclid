@@ -28,6 +28,7 @@ export interface ViewFlags {
   color: string;
   arcMode?: boolean;
   width?: number;                          // lines, circles, segments: stroke width in px; absent = default
+  final?: boolean;                         // part of the final figure (shown normally in the final view); absent = false
 }
 
 interface Base<T extends string, D> {
