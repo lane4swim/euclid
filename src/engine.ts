@@ -8,8 +8,8 @@ import {
 } from "./kernel.js";
 import { formatParts, partsToString, type Lang, type TextPart } from "./i18n.js";
 import {
-  deps, isCurve, type CircleDef, type CircleObject, type Derived, type ErrorCode, type GeoObject,
-  type ID, type InvalidReason, type LineObject, type ObjectType, type PointObject, type Result,
+  deps, isCurve, type CircleDef, type CurveObject, type Derived, type ErrorCode, type GeoObject,
+  type ID, type InvalidReason, type LineObject, type ObjectType, type SegmentObject, type PointObject, type Result,
   type SavedFile,
 } from "./model.js";
 
@@ -79,6 +79,8 @@ export class Engine {
   private listeners = new Set<(e: ChangeEvent) => void>();
   private gesture: Snapshot | null = null;
   private eps = 1e-9;
+  /** Tolerance for "point lies on curve" and segment-end tests; set in recompute. */
+  private onTol = 1e-7;
 
   constructor(a: Vec = DEFAULT_A, b: Vec = DEFAULT_B) {
     this.objects = [givenPoint("A", a), givenPoint("B", b)];
@@ -109,12 +111,15 @@ export class Engine {
     if (!pair.ok) return [];
     const [ca, cb] = pair.value;
     const res = this.intersectObjects(ca, cb);
-    return res.points.map((pos, i) => {
+    const out: IntersectionCandidate[] = [];
+    res.points.forEach((pos, i) => {
+      if (!this.onSegments(ca.id, cb.id, pos)) return; // keeps the pick numbering of the full curves
       const c: IntersectionCandidate = { pick: i as 0 | 1, pos };
       const existing = this.findPointAt(pos);
       if (existing) c.existing = existing;
-      return c;
+      out.push(c);
     });
+    return out;
   }
 
   pointsOnCurve(curve: ID): ID[] { return [...(this.derived.get(curve)?.usedPoints ?? [])]; }
@@ -209,6 +214,7 @@ export class Engine {
     if (res.reason === "coincident") return fail("coincident", [ca.id, cb.id]);
     if (pick >= res.points.length) return fail("no-intersection", [ca.id, cb.id]);
     const pos = res.points[pick];
+    if (!this.onSegments(ca.id, cb.id, pos)) return fail("no-intersection", [ca.id, cb.id]);
     const existing = this.findPointAt(pos);
     if (existing) return ok(existing, true);
     return this.addObject({
@@ -332,6 +338,7 @@ export class Engine {
     const A = this.givenPos(0), B = this.givenPos(1);
     const size = Math.max(Math.abs(A.x), Math.abs(A.y), Math.abs(B.x), Math.abs(B.y), dist(A, B));
     this.eps = epsFor(size);
+    this.onTol = Math.max(this.eps * 100, 1e-7 * Math.max(1, size));
     this.derived = d;
 
     for (let i = 0; i < this.cursor; i++) {
@@ -340,7 +347,7 @@ export class Engine {
     }
 
     // Used points: points lying on each curve, by definition or by position.
-    const onTol = Math.max(this.eps * 100, 1e-7 * Math.max(1, size));
+    const onTol = this.onTol;
     const pts: { id: ID; pos: Vec; def: PointObject["def"] }[] = [];
     for (let i = 0; i < this.cursor; i++) {
       const o = this.objects[i];
@@ -353,12 +360,16 @@ export class Engine {
       const dd = d.get(o.id)!;
       if (!dd.valid) continue;
       const byDef = new Set<ID>();
-      if (o.type === "line") { byDef.add(o.def.p1); byDef.add(o.def.p2); }
+      if (o.type === "line" || o.type === "segment") { byDef.add(o.def.p1); byDef.add(o.def.p2); }
       else if (o.def.kind === "throughPoint") byDef.add(o.def.through);
       const used: ID[] = [];
       for (const p of pts) {
         const defined = byDef.has(p.id) || (p.def.kind === "intersection" && (p.def.a === o.id || p.def.b === o.id));
-        const lies = dd.line ? distToLine(dd.line, p.pos) < onTol : onCircle(dd.circle!, p.pos, onTol);
+        let lies = dd.line ? distToLine(dd.line, p.pos) < onTol : onCircle(dd.circle!, p.pos, onTol);
+        if (lies && dd.segment && dd.line) {
+          const t = lineParam(dd.line, p.pos);
+          lies = t >= -onTol && t <= dd.segment.length + onTol;
+        }
         if (defined || lies) used.push(p.id);
       }
       dd.usedPoints = used;
@@ -481,7 +492,7 @@ export class Engine {
     return ok(undefined);
   }
 
-  private curvePair(a: ID, b: ID): Result<[LineObject | CircleObject, LineObject | CircleObject]> {
+  private curvePair(a: ID, b: ID): Result<[CurveObject, CurveObject]> {
     const ia = this.indexOf(a), ib = this.indexOf(b);
     if (ia < 0) return fail("unknown-id", [a]);
     if (ib < 0) return fail("unknown-id", [b]);
@@ -495,7 +506,7 @@ export class Engine {
   }
 
   /** Intersect two curves given in list order, from the current derived values. */
-  private intersectObjects(a: LineObject | CircleObject, b: LineObject | CircleObject, d = this.derived): { points: Vec[]; reason?: InvalidReason } {
+  private intersectObjects(a: CurveObject, b: CurveObject, d = this.derived): { points: Vec[]; reason?: InvalidReason } {
     const da = d.get(a.id), db = d.get(b.id);
     if (!da?.valid || !db?.valid) return { points: [], reason: "dependency" };
     return intersectGeom(da, db, this.eps);
@@ -508,6 +519,17 @@ export class Engine {
       if (o.type === "point" && p?.valid && p.pos && samePoint(p.pos, pos, this.eps)) return o.id;
     }
     return undefined;
+  }
+
+  /** True unless `pos` lies outside one of the curves that is a segment (with a small tolerance at the ends). */
+  private onSegments(a: ID, b: ID, pos: Vec): boolean {
+    for (const id of [a, b]) {
+      const d = this.derived.get(id);
+      if (!d?.segment || !d.line) continue;
+      const t = lineParam(d.line, pos);
+      if (t < -this.onTol || t > d.segment.length + this.onTol) return false;
+    }
+    return true;
   }
 
   private givenPos(i: 0 | 1): Vec {
@@ -537,6 +559,7 @@ export class Engine {
         if (res.points.length === 0) return { valid: false, reason: res.reason ?? "no-intersection" };
         // A tangent point serves both picks, so points revive when curves separate again.
         const pos = res.points[Math.min(o.def.pick, res.points.length - 1)];
+        if (!this.onSegments(o.def.a, o.def.b, pos)) return { valid: false, reason: "outside-segment" };
         return { valid: true, pos };
       }
       case "line": {
@@ -549,7 +572,8 @@ export class Engine {
       }
       case "segment": {
         const p = d.get(o.def.p1)!.pos!, q = d.get(o.def.p2)!.pos!;
-        return samePoint(p, q, this.eps) ? { valid: false, reason: "coincident" } : { valid: true };
+        const l = lineFromPoints(p, q, this.eps);
+        return l ? { valid: true, line: l, segment: { length: dist(p, q) } } : { valid: false, reason: "coincident" };
       }
     }
   }
@@ -609,8 +633,8 @@ export class Engine {
         break;
       case "point": {
         if (o.def.kind === "given") { parts = [{ text: o.label, slot: "label" }]; break; }
-        const a = this.get(o.def.a) as LineObject | CircleObject;
-        const b = this.get(o.def.b) as LineObject | CircleObject;
+        const a = this.get(o.def.a) as CurveObject;
+        const b = this.get(o.def.b) as CurveObject;
         const side = this.sideParts(a, b, o.def.pick, lang);
         parts = side
           ? formatParts(lang, "step.intersectionSide", { label: o.label, a: a.label, b: b.label }, { side })
@@ -624,13 +648,13 @@ export class Engine {
     return view;
   }
 
-  /** "left of P→Q" for circle–circle, "first in direction P→Q" for line–circle, none for line–line. */
-  private sideParts(a: LineObject | CircleObject, b: LineObject | CircleObject, pick: 0 | 1, lang: Lang): TextPart[] | null {
-    if (a.type === "line" && b.type === "line") return null;
+  /** "left of P→Q" for circle–circle, "first in direction P→Q" for line/segment–circle, none for two straight curves. */
+  private sideParts(a: CurveObject, b: CurveObject, pick: 0 | 1, lang: Lang): TextPart[] | null {
+    if (a.type !== "circle" && b.type !== "circle") return null; // line/segment pairs meet once
     if (a.type === "circle" && b.type === "circle") {
       return formatParts(lang, pick === 0 ? "side.left" : "side.right", { from: this.label(a.def.center), to: this.label(b.def.center) });
     }
-    const line = (a.type === "line" ? a : b) as LineObject;
+    const line = (a.type === "circle" ? b : a) as LineObject | SegmentObject;
     return formatParts(lang, pick === 0 ? "side.first" : "side.second", { from: this.label(line.def.p1), to: this.label(line.def.p2) });
   }
 }
@@ -718,7 +742,7 @@ export function validateFile(data: unknown): { objects: GeoObject[]; cursor: num
         const p = def.pos as { x: number; y: number };
         obj = { id, type, label, def: { kind: "given", pos: { x: p.x, y: p.y } }, view: cleanView };
       } else if (def.kind === "intersection") {
-        const e = ref("a", ["line", "circle"]) ?? ref("b", ["line", "circle"]);
+        const e = ref("a", ["line", "circle", "segment"]) ?? ref("b", ["line", "circle", "segment"]);
         if (e) return e;
         if (def.a === def.b) return `${where} (${id}): a and b are the same curve`;
         if (def.pick !== 0 && def.pick !== 1) return `${where} (${id}): pick must be 0 or 1`;

@@ -55,5 +55,6 @@ These are choices the spec leaves open. Each one is easy to change.
 - **Extra error codes**: `protected` (A and B cannot be deleted) and `bad-file` (load failures, with a `detail` naming the first problem).
 - **Ids and labels.** Ids are `P1`, `L1`, `C1` and `S1`, and stay stable. Labels of new lines and circles follow `engine.labelLang` (`g`/`k` in German, `l`/`c` in English).
 - **Colors.** Objects that keep their default color are drawn with the current theme's color (Okabe–Ito based, with lighter variants in dark mode). A color picked in the step list is used as-is. Exports always use the light palette.
+- **Segments can be intersected** (a later decision, now in spec.md). A segment is intersected as its directed line, and only points on the segment count. Pick numbers stay those of the full line, so a segment may offer only the second point. Where a segment lies on a line, clicking there picks the line.
 - **Snapped points in the line, circle and segment tools** become their own steps just before the new curve. If the curve is refused (for example as a duplicate), those points are undone again.
 - **Performance.** With 111 objects, a recompute takes about 0.3 ms under Node, well inside a 60 fps frame.

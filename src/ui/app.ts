@@ -180,7 +180,7 @@ function updateStatus(): void {
 let snapCache: Snap[] | null = null;
 function snaps(): Snap[] {
   if (snapCache) return snapCache;
-  const curves = engine.active.filter((o) => (o.type === "line" || o.type === "circle") && o.view.visible && engine.derived.get(o.id)?.valid);
+  const curves = engine.active.filter((o) => o.type !== "point" && o.view.visible && engine.derived.get(o.id)?.valid);
   const out: Snap[] = [];
   for (let i = 0; i < curves.length; i++) {
     for (let j = i + 1; j < curves.length; j++) {
@@ -253,10 +253,17 @@ function hitTest(q: Vec, touch: boolean): Hit | null {
     if (best) return best.hit;
   }
 
+  // Lines and circles first: a segment lying on a line must not hide that line.
   for (const o of engine.active) {
-    if (o.type === "point") continue;
+    if (o.type !== "line" && o.type !== "circle") continue;
     const d = objectDistance(o, q, w, h);
-    if (d <= R && (!best || d < best.d)) best = { d, hit: { kind: o.type === "segment" ? "segment" : "curve", id: o.id } };
+    if (d <= R && (!best || d < best.d)) best = { d, hit: { kind: "curve", id: o.id } };
+  }
+  if (best) return best.hit;
+  for (const o of engine.active) {
+    if (o.type !== "segment") continue;
+    const d = objectDistance(o, q, w, h);
+    if (d <= R && (!best || d < best.d)) best = { d, hit: { kind: "segment", id: o.id } };
   }
   return best?.hit ?? null;
 }
@@ -264,7 +271,7 @@ function hitTest(q: Vec, touch: boolean): Hit | null {
 function allowed(h: Hit): boolean {
   if (ui.tool === "move") return h.kind === "point" || h.kind === "curve" || h.kind === "segment";
   if (POINT_TOOLS.has(ui.tool)) return h.kind === "point" || h.kind === "snap";
-  return h.kind === "curve" || h.kind === "snap" || h.kind === "candidate";
+  return h.kind === "curve" || h.kind === "segment" || h.kind === "snap" || h.kind === "candidate";
 }
 
 // ---------------------------------------------------------------- feedback
@@ -325,7 +332,7 @@ function handlePick(h: Hit): void {
   // Intersect tool
   if (h.kind === "candidate" && ui.candidateCurves) { createIntersection(ui.candidateCurves[0], ui.candidateCurves[1], h.pick); return; }
   if (h.kind === "snap") { createIntersection(h.snap.a, h.snap.b, h.snap.pick); return; }
-  if (h.kind !== "curve") return;
+  if (h.kind !== "curve" && h.kind !== "segment") return;
   if (ui.candidates.length) { ui.candidates = []; ui.candidateCurves = null; ui.picked = []; }
   ui.picked.push({ id: h.id });
   if (ui.picked.length === 2) {
@@ -334,7 +341,7 @@ function handlePick(h: Hit): void {
     if (cands.length === 2) {
       ui.candidates = cands.map((c) => ({ pick: c.pick, pos: c.pos }));
       ui.candidateCurves = [a, b];
-    } else createIntersection(a, b, 0);
+    } else createIntersection(a, b, cands[0]?.pick ?? 0); // a segment may leave only the second point
   }
   updateStatus();
   scheduleDraw();

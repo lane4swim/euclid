@@ -38,7 +38,7 @@ export type SegmentObject = Base<"segment", SegmentDef>;
 export type GeoObject = PointObject | LineObject | CircleObject | SegmentObject;
 export type ObjectType = GeoObject["type"];
 
-export type InvalidReason = "parallel" | "no-intersection" | "zero-radius" | "coincident" | "dependency";
+export type InvalidReason = "parallel" | "no-intersection" | "zero-radius" | "coincident" | "dependency" | "outside-segment";
 
 export interface Derived {
   valid: boolean;
@@ -46,6 +46,7 @@ export interface Derived {
   pos?: Vec;
   line?: { origin: Vec; dir: Vec };
   circle?: { center: Vec; r: number };
+  segment?: { length: number };            // segments: `line` runs p1 -> p2, the segment is t in [0, length]
   usedPoints?: ID[];
   arc?: { start: number; end: number };
   span?: { tMin: number; tMax: number };
@@ -82,5 +83,7 @@ export function deps(obj: GeoObject): ID[] {
   }
 }
 
-export const isCurve = (o: GeoObject): o is LineObject | CircleObject =>
-  o.type === "line" || o.type === "circle";
+/** Objects that can be intersected. Segments count, but only points on the segment itself. */
+export type CurveObject = LineObject | CircleObject | SegmentObject;
+export const isCurve = (o: GeoObject): o is CurveObject =>
+  o.type === "line" || o.type === "circle" || o.type === "segment";

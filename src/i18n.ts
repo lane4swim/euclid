@@ -25,6 +25,7 @@ export const messages = {
   "reason.no-intersection": { de: "kein Schnittpunkt", en: "no intersection" },
   "reason.zero-radius": { de: "Radius ist null", en: "radius is zero" },
   "reason.coincident": { de: "Objekte fallen zusammen", en: "objects coincide" },
+  "reason.outside-segment": { de: "liegt nicht auf der Strecke", en: "lies outside the segment" },
   "reason.dependency": { de: "hängt von ungültigem Objekt ab", en: "depends on an invalid object" },
 
   // Error codes
@@ -35,7 +36,7 @@ export const messages = {
   "error.duplicate": { de: "Dieses Objekt gibt es schon: {label}", en: "This object already exists: {label}" },
   "error.unknown-id": { de: "Unbekanntes Objekt", en: "Unknown object" },
   "error.bad-label": { de: "Ungültiger oder bereits vergebener Name", en: "Invalid or already used name" },
-  "error.not-a-curve": { de: "Nur Geraden und Kreise können geschnitten werden", en: "Only lines and circles can be intersected" },
+  "error.not-a-curve": { de: "Nur Geraden, Kreise und Strecken können geschnitten werden", en: "Only lines, circles and segments can be intersected" },
   "error.protected": { de: "Die gegebenen Punkte A und B können nicht gelöscht werden", en: "The given points A and B cannot be deleted" },
   "error.bad-file": { de: "Die Datei ist ungültig: {detail}", en: "The file is invalid: {detail}" },
 
@@ -90,11 +91,11 @@ export const messages = {
   "hint.circleRigid.2": { de: "Zweiten Punkt des Abstands wählen", en: "Choose the second point of the radius" },
   "hint.segment.0": { de: "Ersten Endpunkt wählen", en: "Choose the first endpoint" },
   "hint.segment.1": { de: "Zweiten Endpunkt wählen", en: "Choose the second endpoint" },
-  "hint.intersect.0": { de: "Erste Gerade oder ersten Kreis wählen", en: "Choose the first line or circle" },
-  "hint.intersect.1": { de: "Zweite Gerade oder zweiten Kreis wählen", en: "Choose the second line or circle" },
+  "hint.intersect.0": { de: "Erste Gerade, ersten Kreis oder erste Strecke wählen", en: "Choose the first line, circle or segment" },
+  "hint.intersect.1": { de: "Zweite Gerade, zweiten Kreis oder zweite Strecke wählen", en: "Choose the second line, circle or segment" },
   "hint.intersect.2": { de: "Schnittpunkt 1 oder 2 wählen", en: "Choose intersection 1 or 2" },
   "hint.needPoint": { de: "Hier ist ein Punkt nötig", en: "A point is needed here" },
-  "hint.needCurve": { de: "Hier ist eine Gerade oder ein Kreis nötig", en: "A line or circle is needed here" },
+  "hint.needCurve": { de: "Hier ist eine Gerade, ein Kreis oder eine Strecke nötig", en: "A line, circle or segment is needed here" },
 } satisfies Table;
 
 export type MessageId = keyof typeof messages;

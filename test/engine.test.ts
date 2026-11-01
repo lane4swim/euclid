@@ -210,3 +210,54 @@ test("recompute is fast enough for 100+ objects", () => {
   const perFrame = (performance.now() - t0) / 60;
   assert.ok(perFrame < 8, `recompute took ${perFrame.toFixed(2)} ms per frame`);
 });
+
+test("segments intersect lines, circles and segments, only within the segment", () => {
+  const { e, k1, C, D } = vesica();
+  const ab = val(e.addSegment("A", "B"));
+  const cd = val(e.addLine(C, D));
+  // Segment AB meets line CD at the midpoint.
+  const M = val(e.addIntersection(ab, cd, 0));
+  assert.deepEqual(e.pos(M), { x: 0, y: 0 });
+  assert.equal(e.describeStep(7, "en"), "Intersection of s1 and g1: point E".replace("E", e.get(M)!.label));
+
+  // Segment AB and circle k1 (center A through B): the full line would give (−3, 0) and B;
+  // only B lies on the segment, and it keeps its pick number 1.
+  const cands = e.intersections(ab, k1);
+  assert.deepEqual(cands.map((c) => [c.pick, c.existing]), [[1, "B"]]);
+  const r0 = e.addIntersection(ab, k1, 0);
+  assert.ok(!r0.ok && r0.error === "no-intersection");
+  const r1 = e.addIntersection(k1, ab, 1);
+  assert.ok(r1.ok && r1.value === "B" && r1.duplicate);
+
+  // Circle around M through C has radius √3 and misses segment AB (|x| ≤ 1) but not line AB.
+  const kM = val(e.addCircleThrough(M, C));
+  assert.equal(e.intersections(ab, kM).length, 0);
+  const lineAB = val(e.addLine("A", "B"));
+  assert.equal(e.intersections(lineAB, kM).length, 2);
+
+  // A segment lying on a line has infinitely many common points.
+  assert.equal((e.addIntersection(ab, lineAB, 0) as { error: string }).error, "coincident");
+
+  // Two crossing segments.
+  const sCD = val(e.addSegment(C, D));
+  const X = e.intersections(ab, sCD);
+  assert.equal(X.length, 1);
+  assert.equal(X[0].existing, M);
+
+  // Used points of a segment are only the points on it.
+  assert.deepEqual(new Set(e.pointsOnCurve(ab)), new Set(["A", "B", M]));
+});
+
+test("a saved point outside its segment loads as invalid with reason outside-segment", () => {
+  const { e, k1 } = vesica();
+  const ab = val(e.addSegment("A", "B"));
+  const file = e.toJSON();
+  // Pick 0 of (k1, segment AB) is (−3, 0), which is not on the segment.
+  file.objects.push({ id: "P99", type: "point", label: "Q", def: { kind: "intersection", a: k1, b: ab, pick: 0 }, view: { visible: true, color: "#000" } });
+  file.cursor = file.objects.length;
+  const f = val(Engine.fromJSON(file));
+  const d = f.derived.get("P99")!;
+  assert.equal(d.valid, false);
+  assert.equal(d.reason, "outside-segment");
+  assert.equal(f.steps("en").at(-1)!.reason, "outside-segment");
+});

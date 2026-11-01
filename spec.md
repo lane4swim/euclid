@@ -11,13 +11,13 @@ The site is one static page (HTML, CSS, TypeScript compiled to one JS file or in
 | Topic | Decision |
 | --- | --- |
 | Starting objects | Exactly two given points, A and B. Every later point is an intersection of two existing curves. |
-| Curves | Infinite lines through two points; circles (two creation tools, see below). Nothing else may be intersected. |
+| Curves | Infinite lines through two points; circles (two creation tools, see below); segments (see below). Nothing else may be intersected. |
 | Compass model | Rigid compass: a circle may take its radius from the distance of two other points. |
 | Circle tools | Both: (1) center + point on the circle; (2) center + two points whose distance is the radius. |
 | Dynamics | A and B are draggable. All dependent objects recompute live. |
 | Line display | Lines are mathematically infinite but drawn trimmed to the span of their used points plus a margin. A global toggle shows them infinite. |
 | Circle display | A new circle is shown in full. Each circle has a toggle: full circle or arc-only. In arc mode the arc extent is automatic (shortest arc covering all used intersection points on it, plus a margin). |
-| Segments | Display-only segments between two points. They are never used for intersections or steps that create points. |
+| Segments | Segments between two points. They can be intersected with lines, circles and other segments, but only points on the segment itself count (see Geometry kernel). |
 | Output | Numbered step list beside the drawing; JSON save/load; SVG and PNG export. |
 | Language | German user interface, English as a second language. |
 | Out of scope (v1) | Measuring tools, angles, free points on curves, macros, multi-user editing, server storage. |
@@ -45,7 +45,7 @@ type CircleDef =
   | { kind: "radiusFromPoints"; center: ID; r1: ID; r2: ID }; // rigid compass
 
 // Display-only
-interface SegmentDef { p1: ID; p2: ID }    // never intersected, never a source of points
+interface SegmentDef { p1: ID; p2: ID }    // intersectable; only points within the segment count
 
 interface ViewFlags {
   visible: boolean;
@@ -64,7 +64,7 @@ interface GeoObject {
 // Derived cache, rebuilt by recompute(); not serialized
 interface Derived {
   valid: boolean;                          // false if a dependency is invalid or degenerate
-  reason?: "parallel" | "no-intersection" | "zero-radius" | "coincident" | "dependency";
+  reason?: "parallel" | "no-intersection" | "zero-radius" | "coincident" | "dependency" | "outside-segment";
   pos?: Vec;                               // points
   line?: { origin: Vec; dir: Vec };        // dir is a unit vector
   circle?: { center: Vec; r: number };
@@ -110,6 +110,8 @@ circleFromDef(def, pos): {center, r} | null   // null if r is below tolerance
 
 The order of the two curves is the order of their positions in `objects`, so it never changes. A tangent case returns one point; it is stored as pick 0 and revalidates as 0 only if the point is still a single one.
 
+**Segments.** A segment is intersected as the directed line p1 → p2, so its picks are numbered exactly as for that line. A result counts only if it lies on the segment (parameter t between 0 and the segment length, within tolerance). `intersections()` leaves out points outside the segment but keeps the pick numbers of the remaining ones, and `addIntersection` refuses them with `no-intersection`. A stored point that ends up outside its segment becomes invalid with the reason `outside-segment`. A segment lying on a line, or two collinear segments, are `coincident`.
+
 **Tolerance.** Use a relative epsilon `eps = 1e-9 * max(1, scene size)` for parallel, tangent and equality tests. Points closer than `eps` count as the same point. Tangency is detected when the discriminant is within `eps` of zero and is then treated as exactly zero.
 
 **Degenerate inputs.** Two equal points for a line, or radius below `eps`, are refused at creation and flagged `zero-radius` or `coincident` during recompute. Identical circles (same center and radius) or identical lines have infinitely many intersections: the creation is refused with the reason `coincident`.
@@ -130,7 +132,7 @@ class Engine {
   addLine(p1: ID, p2: ID): Result<ID>;
   addCircleThrough(center: ID, through: ID): Result<ID>;
   addCircleRadius(center: ID, r1: ID, r2: ID): Result<ID>;
-  addSegment(p1: ID, p2: ID): Result<ID>;                 // display-only
+  addSegment(p1: ID, p2: ID): Result<ID>;
   addIntersection(a: ID, b: ID, pick: 0 | 1): Result<ID>;
 
   // Queries for the UI
@@ -218,7 +220,7 @@ interface UIState {
 | Segment | Point 1, point 2 | `addSegment` |
 | Intersect | Curve 1, curve 2; then candidate 1 or 2 if there are two | `addIntersection` |
 
-Only points, including snapped intersections of two curves that are not yet marked, can be picked by the line, circle and segment tools; only lines and circles by the intersect tool. A click on something not allowed for the current pick is ignored and shows a short hint. After an intersection is created, the new point shows an inline name field with the automatic label preselected: Enter accepts, typing renames.
+Only points, including snapped intersections of two curves that are not yet marked, can be picked by the line, circle and segment tools; only lines, circles and segments by the intersect tool. Where a segment lies on a line, the line is picked. A click on something not allowed for the current pick is ignored and shows a short hint. After an intersection is created, the new point shows an inline name field with the automatic label preselected: Enter accepts, typing renames.
 
 **Step list.** One row per object, numbered from 1 (A and B are shown as "Given" above the list). Each row shows the generated sentence, with labels in bold. Examples (English / German):
 
@@ -289,8 +291,10 @@ The spec above assumes the default shown for each question. All questions are no
 1. **Arc extent.** In arc mode, should the arc cover every point lying on the circle (including its through point), or only the intersection points that are used as input of a later step? Decided for now: every point on the circle.
 2. **Intersection shortcut.** Decided: the line, circle and segment tools may snap to intersections of two curves that have not been marked as points. Such a point is created as a regular labelled point (see the follow-up below).
 3. **Naming the two intersections.** Step text says "left of A→B" or "right of…" for circle–circle points and "first/second along the line" for line–circle points. Is that clear enough, or should steps just say "first/second intersection"? Decided for now: left/right wording.
-4. **Segments in the step list.** Should display-only segments appear as numbered steps (muted), or be listed separately from the construction steps? Decided for now: numbered but muted.
+4. **Segments in the step list.** Should segments appear as numbered steps (muted), or be listed separately from the construction steps? Decided for now: numbered but muted.
 5. **Delivery.** Decided: several files (HTML, CSS, JS) are fine. The site still needs no server and no runtime dependencies, so it opens from a folder or any static host.
 6. **Autosave.** Should the current construction be saved automatically in the browser and restored on reload, in addition to JSON files? Decided for now: yes, with a "new construction" button.
 
 **Follow-up to question 2.** Decided: a snapped intersection becomes a regular labelled point with its own numbered step, created just before the new line, circle or segment. If two curves have two intersections, the snap shows both as numbered candidates and you click one.
+
+**Follow-up: intersecting segments.** Decided (Nov 1, 2026): segments are no longer display-only. They can be intersected with lines, circles and other segments, counting only points on the segment itself.
