@@ -150,6 +150,7 @@ kbd {
 }
 .menu-items button { justify-content: flex-start; background: transparent; border-color: transparent; }
 .menu-items button:hover { background: var(--surface-2); }
+.menu-items hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--border); }
 
 /* ------------------------------------------------------------------ main */
 

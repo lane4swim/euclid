@@ -5,6 +5,7 @@ import { format, formatParts, messages, type Lang, type MessageId } from "../i18
 import { dist, type Vec } from "../kernel.js";
 import { DEFAULT_WIDTH, deps, hasWidth, type ErrorCode, type GeoObject, type ID, type Result } from "../model.js";
 import { arcExtent } from "../render-geom.js";
+import { buildReport, type ReportFormat } from "../report.js";
 import { colorOf, drawSVG, drawnLine, exportSVG, fitView, toScreen, toWorld, type Ghost, type Palette, type View } from "./draw.js";
 
 // ------------------------------------------------------------------ setup
@@ -800,6 +801,14 @@ function exportPng(background: string | null): void {
   img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(s);
 }
 
+/** Step list plus drawing, as a self-contained Markdown or HTML file in the current language. */
+function exportReport(fmt: ReportFormat): void {
+  const svg = exportSVG(engine, LIGHT, ui.settings.showInfiniteLines, null);
+  const text = buildReport(engine, fmt, { lang: ui.settings.lang, svg });
+  const type = fmt === "md" ? "text/markdown;charset=utf-8" : "text/html;charset=utf-8";
+  download(`${t("ui.fileName")}.${fmt}`, new Blob([text], { type }));
+}
+
 // ------------------------------------------------------------ toolbar & keys
 
 function applyLanguage(): void {
@@ -848,6 +857,8 @@ const actions: Record<string, () => void> = {
   "export-svg": exportSvgFile,
   "export-png-white": () => exportPng("#ffffff"),
   "export-png-transparent": () => exportPng(null),
+  "export-md": () => exportReport("md"),
+  "export-html": () => exportReport("html"),
 };
 document.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((b) => {
   b.addEventListener("click", () => {

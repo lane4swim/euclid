@@ -18,7 +18,7 @@ The site is one static page (HTML, CSS, TypeScript compiled to one JS file or in
 | Line display | Lines are mathematically infinite but drawn trimmed to the span of their used points plus a margin. A global toggle shows them infinite. |
 | Circle display | A new circle is shown in full. Each circle has a toggle: full circle or arc-only. In arc mode the arc extent is automatic (shortest arc covering all used intersection points on it, plus a margin). |
 | Segments | Segments between two points. They can be intersected with lines, circles and other segments, but only points on the segment itself count (see Geometry kernel). |
-| Output | Numbered step list beside the drawing; JSON save/load; SVG and PNG export. |
+| Output | Numbered step list beside the drawing; JSON save/load; SVG and PNG export; step list export as Markdown or HTML with the drawing. |
 | Language | German user interface, English as a second language. |
 | Out of scope (v1) | Measuring tools, angles, free points on curves, macros, multi-user editing, server storage. |
 | Delivery | Static site in several files (index.html, CSS, JS modules); no server, no runtime dependencies. |
@@ -259,6 +259,7 @@ On load the engine validates before accepting anything: correct `format` and a k
 
 - **SVG:** the visible active objects drawn by the same draw function, fitted to their bounds with 5% padding, with inline styles and labels as text so the file opens correctly anywhere.
 - **PNG:** that SVG rasterized on a canvas at 2× scale, with a choice of white or transparent background.
+- **Step list (Markdown or HTML):** the title, the drawing (the SVG above, light palette, no background), "Given: points A and B" and the numbered steps in the current language, with labels in bold and invalid steps marked with their reason. Markdown embeds the SVG as a base64 `data:` image so the file stands alone. HTML is a standalone page with the SVG inline and a small inline stylesheet (light and dark), with no scripts.
 - Hidden, invalid and redo-stack objects are not exported.
 
 **Localization.** All user text comes from one table keyed by message id, with `de` and `en` entries; no text is built from concatenated fragments, because word order differs. Step sentences are templates per language with named slots (`{center}`, `{through}`, `{a}`, `{b}`, `{label}`, `{side}`). The first language is German if `navigator.language` starts with `de`, else English; the choice is remembered in `localStorage` (wrapped in try/catch, so the site works without it). Labels already stored in the construction do not change when the language changes.
