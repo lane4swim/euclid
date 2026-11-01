@@ -238,7 +238,7 @@ Only points, including snapped intersections of two curves that are not yet mark
 - 2. Circle k2 with center B through A / Kreis k2 um B durch A
 - 3. Intersection of k1 and k2, left of A→B: point C / Schnittpunkt von k1 und k2, links von A→B: Punkt C
 
-Row actions: eye (show or hide), rename, color, line width (lines, circles and segments), arc/full toggle (circles only), delete (asks first when other steps depend on it). Hovering a row highlights the object on the drawing; clicking selects it. The last row is the "current" step; undo removes it.
+Row actions: eye (show or hide), rename, color, line width (lines, circles and segments), arc/full toggle (circles only), delete (asks first when other steps depend on it). Hovering a row highlights the object on the drawing; clicking selects it. While a step is selected, the steps after it are shown in a lighter color in the list and faded on the drawing, so the construction can be read as it stood at that step; selecting A or B, the last step, or nothing shows everything normally. Exports are not affected. The last row is the "current" step; undo removes it.
 
 **Keyboard.** `1`–`7` choose tools, `Esc` cancel, `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` undo and redo, `Delete` remove the selected object, `F` fit view to the construction.
 

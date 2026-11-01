@@ -30,7 +30,12 @@ export interface DrawOptions {
   candidates?: { pos: Vec; n: number; hover: boolean }[];
   snap?: Vec | null;
   background?: string | null;
+  /** Objects after this index in the object list (later steps) are drawn faded. */
+  fadeAfter?: number | null;
 }
+
+/** Opacity of objects from steps after the selected one. */
+export const FADE_OPACITY = 0.28;
 
 export const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
@@ -81,9 +86,15 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
 
   if (o.background) out.push(`<rect x="0" y="0" width="${f(o.width)}" height="${f(o.height)}" fill="${o.background}"/>`);
 
-  for (const obj of e.active) {
+  const layers = [halos, segs, curves, points, labels];
+  const active = e.active;
+  for (let index = 0; index < active.length; index++) {
+    const obj = active[index];
     const d = e.derived.get(obj.id);
     if (!d?.valid || !obj.view.visible) continue;
+    // Everything this object adds to the layers below is faded if it belongs to a later step.
+    const faded = o.fadeAfter != null && index > o.fadeAfter;
+    const before = faded ? layers.map((l) => l.length) : null;
     const isCur = o.current === obj.id;
     const color = isCur ? pal.accent : colorOf(obj, pal);
     const strong = hl.has(obj.id) || o.hover === obj.id;
@@ -132,6 +143,11 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
         labels.push(`<text x="${f(lx)}" y="${f(ly)}" fill="${isCur ? pal.accent : pal.label}" font-family="${FONT}" font-size="15" font-style="italic"${right ? ' text-anchor="end"' : ""}${strong ? ' font-weight="700"' : ""}>${esc(obj.label)}</text>`);
         break;
       }
+    }
+    if (before) {
+      layers.forEach((l, k) => {
+        for (let j = before[k]; j < l.length; j++) l[j] = l[j].replace(/^<(\w+) /, `<$1 opacity="${FADE_OPACITY}" `);
+      });
     }
   }
 
