@@ -6,7 +6,8 @@ export type { Vec };
 export type ID = string;
 
 export type PointDef =
-  | { kind: "given"; pos: Vec }
+  | { kind: "given"; pos: Vec }            // only A and B
+  | { kind: "free"; pos: Vec }             // arbitrary point placed by the user; draggable
   | { kind: "intersection"; a: ID; b: ID; pick: 0 | 1 };
 
 export interface LineDef { p1: ID; p2: ID }
@@ -81,7 +82,7 @@ export const isValidWidth = (w: unknown): w is number => typeof w === "number" &
 export function deps(obj: GeoObject): ID[] {
   switch (obj.type) {
     case "point":
-      return obj.def.kind === "given" ? [] : [obj.def.a, obj.def.b];
+      return obj.def.kind === "intersection" ? [obj.def.a, obj.def.b] : [];
     case "line":
     case "segment":
       return [obj.def.p1, obj.def.p2];

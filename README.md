@@ -6,8 +6,8 @@ A straightedge-and-compass construction site: a static web page where you build 
 
 The geometry kernel, engine and browser UI are implemented. The UI includes:
 
-- six tools (keys 1–6), with hover, snapping to unmarked intersections, dashed ghost previews, and numbered candidates for choosing between two intersections;
-- dragging A and B with live updates, pan by dragging empty space, zoom with the wheel or a pinch;
+- seven tools (keys 1–7), including a Point tool for arbitrary points, with hover, snapping to unmarked intersections, dashed ghost previews, and numbered candidates for choosing between two intersections;
+- dragging A, B and arbitrary points with live updates, pan by dragging empty space, zoom with the wheel or a pinch;
 - the step list with show/hide, rename, color, line width, arc/full toggle, and delete (with confirmation when other steps depend on the object);
 - undo/redo, JSON save/open, SVG and PNG export (white or transparent background), step-list export as Markdown or HTML with the drawing, and autosave in the browser;
 - German and English, and light, dark and automatic themes.
@@ -59,5 +59,7 @@ These are choices the spec leaves open. Each one is easy to change.
 - **Segments can be intersected** (a later decision, now in spec.md). A segment is intersected as its directed line, and only points on the segment count. Pick numbers stay those of the full line, so a segment may offer only the second point. Where a segment lies on a line, clicking there picks the line.
 - **Line width** is stored in `view.width` in screen pixels (0.25–12), so it stays the same at every zoom level and in exports. It is only saved once changed; the defaults are 1.6 px for lines and circles and 1.25 px for segments. The step list offers 0.5–8 px.
 - **Step-list export.** The Markdown file embeds the drawing as a base64 `data:` image so it is a single file. VS Code, Obsidian, Typora and pandoc show it; GitHub's Markdown renderer blocks `data:` images, so there the figure does not appear. Adjacent labels share one bold run (`**AB**`), because `**A****B**` breaks in Markdown.
+- **Arbitrary points** (`kind: "free"`) are free in the plane, not bound to curves. The Point tool places one on empty space; in the Line, Circle and Segment tools a click on empty space creates one and uses it, so an arbitrary line takes two clicks. A click with the Point tool on a curve shows a hint, so a point that looks attached to a curve is never created loose. The Point tool is key 7 so keys 1–6 keep their spec meaning.
+- **Drags** discard the redo region, like any other new change. Moves to the current position are ignored.
 - **Snapped points in the line, circle and segment tools** become their own steps just before the new curve. If the curve is refused (for example as a duplicate), those points are undone again.
 - **Performance.** With 111 objects, a recompute takes about 0.3 ms under Node, well inside a 60 fps frame.

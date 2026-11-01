@@ -78,6 +78,7 @@ export class Engine {
   private redoStack: HistoryEntry[] = [];
   private listeners = new Set<(e: ChangeEvent) => void>();
   private gesture: Snapshot | null = null;
+  private gestureMoved = false;
   private eps = 1e-9;
   /** Tolerance for "point lies on curve" and segment-end tests; set in recompute. */
   private onTol = 1e-7;
@@ -223,37 +224,62 @@ export class Engine {
     });
   }
 
+  /**
+   * Add a free point at a position. If an existing point is already there,
+   * that point's id is returned with `duplicate: true`.
+   */
+  addFreePoint(pos: Vec): Result<ID> {
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return fail("unknown-id");
+    const existing = this.findPointAt(pos);
+    if (existing) return ok(existing, true);
+    return this.addObject({
+      id: this.nextId("point"), type: "point", label: this.nextPointLabel(),
+      def: { kind: "free", pos: { x: pos.x, y: pos.y } }, view: { visible: true, color: DEFAULT_COLORS.point },
+    });
+  }
+
   // ---------------------------------------------------------------- editing
 
-  /** Start a drag gesture: all moveGiven calls until endMove form one history entry. */
+  /** Start a drag gesture: all movePoint calls until endMove form one history entry. */
   beginMove(): void {
-    if (!this.gesture) this.gesture = this.snapshot();
+    if (!this.gesture) { this.gesture = this.snapshot(); this.gestureMoved = false; }
   }
 
   endMove(): void {
     const before = this.gesture;
     this.gesture = null;
-    if (!before) return;
-    const after = this.snapshot();
-    const moved = [0, 1].some((i) => {
-      const p = (before.objects[i].def as { pos: Vec }).pos, q = (after.objects[i].def as { pos: Vec }).pos;
-      return p.x !== q.x || p.y !== q.y;
-    });
-    if (moved) this.pushEntry({ kind: "snapshot", before, after });
+    if (!before || !this.gestureMoved) return;
+    // A drag is a new change: drop the redo region from both sides of the entry.
+    before.objects.length = before.cursor;
+    this.objects.length = this.cursor;
+    this.pushEntry({ kind: "snapshot", before, after: this.snapshot() });
   }
 
-  moveGiven(id: "A" | "B", pos: Vec): void {
-    const o = this.objects[id === "A" ? 0 : 1];
-    if (o.type !== "point" || o.def.kind !== "given" || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+  /** True for points the user may drag: the given points A and B, and free points. */
+  isDraggable(id: ID): boolean {
+    const o = this.get(id);
+    return !!o && o.type === "point" && (o.def.kind === "given" || o.def.kind === "free");
+  }
+
+  /** Move a draggable point (A, B or a free point); live during a gesture, otherwise one history entry. */
+  movePoint(id: ID, pos: Vec): void {
+    const o = this.get(id);
+    if (!o || o.type !== "point" || (o.def.kind !== "given" && o.def.kind !== "free")) return;
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+    const def = o.def;
+    if (def.pos.x === pos.x && def.pos.y === pos.y) return;
     if (this.gesture) {
-      o.def.pos = { x: pos.x, y: pos.y };
+      def.pos = { x: pos.x, y: pos.y };
+      this.gestureMoved = true;
       this.recompute();
       this.emit({ kind: "move", ids: [id] });
       return;
     }
-    if (o.def.pos.x === pos.x && o.def.pos.y === pos.y) return;
-    this.mutate("move", [id], () => { (o.def as { pos: Vec }).pos = { x: pos.x, y: pos.y }; });
+    this.mutate("move", [id], () => { (this.get(id)!.def as { pos: Vec }).pos = { x: pos.x, y: pos.y }; });
   }
+
+  /** Kept for the spec's API: move A or B. */
+  moveGiven(id: "A" | "B", pos: Vec): void { this.movePoint(id, pos); }
 
   rename(id: ID, label: string): Result<void> {
     const o = this.get(id);
@@ -342,8 +368,13 @@ export class Engine {
   /** Rebuild every Derived entry in list order, then used points, spans and arcs. */
   recompute(): void {
     const d = new Map<ID, Derived>();
+    // Scene size from the points that carry positions: A, B and free points.
     const A = this.givenPos(0), B = this.givenPos(1);
-    const size = Math.max(Math.abs(A.x), Math.abs(A.y), Math.abs(B.x), Math.abs(B.y), dist(A, B));
+    let size = Math.max(Math.abs(A.x), Math.abs(A.y), Math.abs(B.x), Math.abs(B.y), dist(A, B));
+    for (let i = 2; i < this.cursor; i++) {
+      const def = this.objects[i].def;
+      if ("kind" in def && def.kind === "free") size = Math.max(size, Math.abs(def.pos.x), Math.abs(def.pos.y));
+    }
     this.eps = epsFor(size);
     this.onTol = Math.max(this.eps * 100, 1e-7 * Math.max(1, size));
     this.derived = d;
@@ -560,7 +591,7 @@ export class Engine {
     if (deps(o).some((id) => !d.get(id)?.valid)) return { valid: false, reason: "dependency" };
     switch (o.type) {
       case "point": {
-        if (o.def.kind === "given") return { valid: true, pos: { ...o.def.pos } };
+        if (o.def.kind === "given" || o.def.kind === "free") return { valid: true, pos: { ...o.def.pos } };
         const da = d.get(o.def.a)!, db = d.get(o.def.b)!;
         const res = intersectGeom(da, db, this.eps);
         if (res.points.length === 0) return { valid: false, reason: res.reason ?? "no-intersection" };
@@ -640,6 +671,7 @@ export class Engine {
         break;
       case "point": {
         if (o.def.kind === "given") { parts = [{ text: o.label, slot: "label" }]; break; }
+        if (o.def.kind === "free") { parts = formatParts(lang, "step.free", { label: o.label }); break; }
         const a = this.get(o.def.a) as CurveObject;
         const b = this.get(o.def.b) as CurveObject;
         const side = this.sideParts(a, b, o.def.pick, lang);
@@ -753,6 +785,10 @@ export function validateFile(data: unknown): { objects: GeoObject[]; cursor: num
         if (!isVec(def.pos)) return `${where} (${id}): position invalid`;
         const p = def.pos as { x: number; y: number };
         obj = { id, type, label, def: { kind: "given", pos: { x: p.x, y: p.y } }, view: cleanView };
+      } else if (def.kind === "free") {
+        if (!isVec(def.pos)) return `${where} (${id}): position invalid`;
+        const p = def.pos as { x: number; y: number };
+        obj = { id, type, label, def: { kind: "free", pos: { x: p.x, y: p.y } }, view: cleanView };
       } else if (def.kind === "intersection") {
         const e = ref("a", ["line", "circle", "segment"]) ?? ref("b", ["line", "circle", "segment"]);
         if (e) return e;

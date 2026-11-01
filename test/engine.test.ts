@@ -179,7 +179,7 @@ test("onChange fires once per mutation and a drag is one history entry", () => {
   let n = 0;
   const off = e.onChange(() => n++);
   e.beginMove();
-  for (let i = 0; i < 10; i++) e.moveGiven("A", { x: -1 - i / 10, y: 0 });
+  for (let i = 1; i <= 10; i++) e.moveGiven("A", { x: -1 - i / 10, y: 0 }); // no-op moves emit nothing
   e.endMove();
   assert.equal(n, 10);
   e.undo();
@@ -299,4 +299,74 @@ test("line width: set, undo/redo, save/load and validation", () => {
   bad((file) => { file.objects.find((o: any) => o.id === g).view.width = 50; });
   bad((file) => { file.objects.find((o: any) => o.id === g).view.width = "2"; });
   bad((file) => { file.objects.find((o: any) => o.id === C).view.width = 2; });
+});
+
+test("free points: create, reuse, drag with dependents, undo, save/load, step text", () => {
+  const e = new Engine();
+  const P = val(e.addFreePoint({ x: 0, y: 2 }));
+  assert.equal(e.get(P)!.label, "C");
+  assert.ok(e.isDraggable(P) && e.isDraggable("A"));
+  assert.equal(e.describeStep(1, "de"), "Beliebiger Punkt C");
+  assert.equal(e.describeStep(1, "en"), "Arbitrary point C");
+
+  // A point at the position of an existing one is reused.
+  const again = e.addFreePoint({ x: 0, y: 2 });
+  assert.ok(again.ok && again.value === P && again.duplicate);
+  const onB = e.addFreePoint({ x: 1, y: 0 });
+  assert.ok(onB.ok && onB.value === "B" && onB.duplicate);
+
+  // Arbitrary line and circle through it; the intersection follows a drag.
+  const g = val(e.addLine("A", P));
+  const k = val(e.addCircleThrough(P, "B"));
+  // The circle around P through B also passes through A (both at distance √5), so take the other point.
+  const pick = e.intersections(g, k).find((c) => !c.existing)!.pick;
+  const X = val(e.addIntersection(g, k, pick));
+  assert.ok(!e.isDraggable(X), "intersection points are not draggable");
+  const before = e.pos(X)!;
+  e.beginMove();
+  e.movePoint(P, { x: 0.5, y: 3 });
+  e.movePoint(P, { x: 1, y: 4 });
+  e.endMove();
+  assert.notDeepEqual(e.pos(X), before);
+  assert.ok(e.derived.get(X)!.valid);
+  e.undo(); // the whole drag
+  assert.deepEqual(e.pos(P), { x: 0, y: 2 });
+  assert.deepEqual(e.pos(X), before);
+
+  // Non-draggable points and bad positions are ignored.
+  e.movePoint(X, { x: 9, y: 9 });
+  e.movePoint(P, { x: Number.NaN, y: 0 });
+  assert.deepEqual(e.pos(P), { x: 0, y: 2 });
+
+  // Save and load keep free points; the file validator accepts them after A and B only.
+  const f = val(Engine.fromJSON(JSON.stringify(e.toJSON())));
+  assert.deepEqual([...f.derived], [...e.derived]);
+  const file = e.toJSON() as any;
+  file.objects[2].def.pos = { x: "0", y: 2 };
+  assert.ok(!Engine.fromJSON(file).ok);
+  const swapped = e.toJSON() as any;
+  swapped.objects[1] = { ...swapped.objects[1], def: { kind: "free", pos: { x: 1, y: 0 } } };
+  assert.ok(!Engine.fromJSON(swapped).ok, "B must stay a given point");
+
+  // Deleting a free point deletes what depends on it.
+  assert.deepEqual(val(e.remove(P)), [P, g, k, X]);
+});
+
+test("a drag after undo discards the redo region", () => {
+  const e = new Engine();
+  val(e.addCircleThrough("A", "B"));
+  e.undo();
+  assert.ok(e.canRedo());
+  e.beginMove();
+  e.movePoint("B", { x: 2, y: 0 });
+  e.endMove();
+  assert.equal(e.canRedo(), false);
+  assert.equal(e.objects.length, e.cursor);
+  e.undo();
+  assert.deepEqual(e.pos("B"), { x: 1, y: 0 });
+  assert.equal(e.objects.length, 2);
+  // A click without movement records nothing.
+  e.beginMove();
+  e.endMove();
+  assert.equal(e.canUndo(), false);
 });

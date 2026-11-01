@@ -10,13 +10,14 @@ import { colorOf, drawSVG, drawnLine, exportSVG, fitView, toScreen, toWorld, typ
 
 // ------------------------------------------------------------------ setup
 
-type Tool = "move" | "line" | "circle" | "circleRigid" | "segment" | "intersect";
-const TOOLS: Tool[] = ["move", "line", "circle", "circleRigid", "segment", "intersect"];
+type Tool = "move" | "line" | "circle" | "circleRigid" | "segment" | "intersect" | "point";
+const TOOLS: Tool[] = ["move", "line", "circle", "circleRigid", "segment", "intersect", "point"]; // keys 1–7
 const POINT_TOOLS = new Set<Tool>(["line", "circle", "circleRigid", "segment"]);
 type Theme = "auto" | "light" | "dark";
 
 interface Snap { a: ID; b: ID; pick: 0 | 1; pos: Vec }
-type Pick = { id: ID } | { snap: Snap };
+/** A chosen point: an existing one, an unmarked intersection, or a new free point at a position. */
+type Pick = { id: ID } | { snap: Snap } | { free: Vec };
 type Hit =
   | { kind: "point" | "curve" | "segment"; id: ID }
   | { kind: "snap"; snap: Snap }
@@ -111,7 +112,8 @@ function scheduleSteps(): void {
 }
 
 function pickPos(p: Pick): Vec | undefined {
-  return "id" in p ? engine.pos(p.id) : p.snap.pos;
+  if ("id" in p) return engine.pos(p.id);
+  return "snap" in p ? p.snap.pos : p.free;
 }
 
 function hitPos(h: Hit | null): Vec | undefined {
@@ -164,7 +166,7 @@ function updateCursor(): void {
   const h = ui.hover;
   if (gesture?.kind === "drag") svg.style.cursor = "grabbing";
   else if (gesture?.kind === "pan" && gesture.moved) svg.style.cursor = "move";
-  else if (h && ui.tool === "move" && h.kind === "point" && (h.id === "A" || h.id === "B")) svg.style.cursor = "grab";
+  else if (h && ui.tool === "move" && h.kind === "point" && engine.isDraggable(h.id)) svg.style.cursor = "grab";
   else if (h) svg.style.cursor = "pointer";
   else svg.style.cursor = ui.tool === "move" ? "default" : "crosshair";
 }
@@ -271,7 +273,7 @@ function hitTest(q: Vec, touch: boolean): Hit | null {
 
 function allowed(h: Hit): boolean {
   if (ui.tool === "move") return h.kind === "point" || h.kind === "curve" || h.kind === "segment";
-  if (POINT_TOOLS.has(ui.tool)) return h.kind === "point" || h.kind === "snap";
+  if (POINT_TOOLS.has(ui.tool) || ui.tool === "point") return h.kind === "point" || h.kind === "snap";
   return h.kind === "curve" || h.kind === "segment" || h.kind === "snap" || h.kind === "candidate";
 }
 
@@ -322,6 +324,12 @@ function select(id: ID | null): void {
 }
 
 function handlePick(h: Hit): void {
+  if (ui.tool === "point") {
+    // On an existing point: select it. On an unmarked intersection: mark it.
+    if (h.kind === "snap") createIntersection(h.snap.a, h.snap.b, h.snap.pick);
+    else if (h.kind === "point") { select(h.id); toast(t("ui.existingPoint", { label: label(h.id) }), "info", [h.id]); }
+    return;
+  }
   if (POINT_TOOLS.has(ui.tool)) {
     ui.picked.push(h.kind === "snap" ? { snap: h.snap } : { id: (h as { id: ID }).id });
     const need = ui.tool === "circleRigid" ? 3 : 2;
@@ -348,7 +356,7 @@ function handlePick(h: Hit): void {
   scheduleDraw();
 }
 
-/** Resolve snapped intersections into points (each its own step), then run the tool. */
+/** Resolve snapped intersections and new free points into points (each its own step), then run the tool. */
 function completePointTool(): void {
   const created: ID[] = [];
   const ids: ID[] = [];
@@ -357,7 +365,7 @@ function completePointTool(): void {
   ui.picked = []; // engine events fire below; the pick sequence is finished
   for (const p of picks) {
     if ("id" in p) { ids.push(p.id); continue; }
-    const r = engine.addIntersection(p.snap.a, p.snap.b, p.snap.pick);
+    const r = "snap" in p ? engine.addIntersection(p.snap.a, p.snap.b, p.snap.pick) : engine.addFreePoint(p.free);
     if (!r.ok) { rollback(); showError(r); cancelPick(); return; }
     if (!r.duplicate) created.push(r.value);
     ids.push(r.value);
@@ -370,6 +378,22 @@ function completePointTool(): void {
     default: r = engine.addCircleRadius(ids[0], ids[1], ids[2]); break;
   }
   if (!r.ok) { rollback(); showError(r); }
+}
+
+/** Empty space was clicked: the point tool places a free point; the other point tools use one as their next pick. */
+function placeFree(pos: Vec): void {
+  if (ui.tool === "point") {
+    const r = engine.addFreePoint(pos);
+    if (!r.ok) showError(r);
+    else if (r.duplicate) { select(r.value); toast(t("ui.existingPoint", { label: label(r.value) }), "info", [r.value]); }
+    else { const id = r.value; requestAnimationFrame(() => openNameField(id)); }
+    return;
+  }
+  if (!POINT_TOOLS.has(ui.tool)) return;
+  ui.picked.push({ free: pos });
+  if (ui.picked.length >= (ui.tool === "circleRigid" ? 3 : 2)) completePointTool();
+  updateStatus();
+  scheduleDraw();
 }
 
 function createIntersection(a: ID, b: ID, pick: 0 | 1): void {
@@ -420,8 +444,8 @@ nameField.addEventListener("blur", () => { if (nameTarget) closeNameField(true);
 // ------------------------------------------------------------ pointer input
 
 type Gesture =
-  | { kind: "drag"; id: "A" | "B"; offset: Vec; moved: boolean }
-  | { kind: "pan"; start: Vec; origin: Vec; moved: boolean; hit: Hit | null }
+  | { kind: "drag"; id: ID; offset: Vec; moved: boolean }
+  | { kind: "pan"; start: Vec; origin: Vec; moved: boolean; hit: Hit | null; place: boolean }
   | { kind: "pinch"; d0: number; world0: Vec; scale0: number };
 let gesture: Gesture | null = null;
 const pointers = new Map<number, Vec>();
@@ -458,7 +482,7 @@ svg.addEventListener("pointerdown", (ev) => {
   if (pointers.size > 2) return;
   const hit = hitTest(q, ev.pointerType !== "mouse");
   if (ui.tool === "move") {
-    if (hit?.kind === "point" && (hit.id === "A" || hit.id === "B")) {
+    if (hit?.kind === "point" && engine.isDraggable(hit.id)) {
       const { w, h } = size();
       const wq = toWorld(ui.view, w, h, q), p = engine.pos(hit.id)!;
       engine.beginMove();
@@ -468,9 +492,12 @@ svg.addEventListener("pointerdown", (ev) => {
     }
   } else if (hit) {
     if (allowed(hit)) { handlePick(hit); gesture = null; return; }
-    toast(t(POINT_TOOLS.has(ui.tool) ? "hint.needPoint" : "hint.needCurve"), "info");
+    const hint = ui.tool === "point" ? "hint.freeNotOnCurve" : POINT_TOOLS.has(ui.tool) ? "hint.needPoint" : "hint.needCurve";
+    toast(t(hint), "info");
   }
-  gesture = { kind: "pan", start: q, origin: { ...ui.view.origin }, moved: false, hit };
+  // Empty space: drag pans; a click without movement places a free point (point-taking tools only).
+  const place = !hit && (ui.tool === "point" || POINT_TOOLS.has(ui.tool));
+  gesture = { kind: "pan", start: q, origin: { ...ui.view.origin }, moved: false, hit, place };
 });
 
 svg.addEventListener("pointermove", (ev) => {
@@ -489,7 +516,7 @@ svg.addEventListener("pointermove", (ev) => {
   }
   if (gesture?.kind === "drag") {
     gesture.moved = true;
-    engine.moveGiven(gesture.id, { x: ui.pointer.x - gesture.offset.x, y: ui.pointer.y - gesture.offset.y });
+    engine.movePoint(gesture.id, { x: ui.pointer.x - gesture.offset.x, y: ui.pointer.y - gesture.offset.y });
     return;
   }
   if (gesture?.kind === "pan") {
@@ -519,6 +546,9 @@ function endPointer(ev: PointerEvent): void {
   } else if (g?.kind === "pan" && !g.moved && ui.tool === "move") {
     const h = g.hit;
     select(h && (h.kind === "point" || h.kind === "curve" || h.kind === "segment") ? h.id : null);
+  } else if (g?.kind === "pan" && !g.moved && g.place) {
+    const { w, h } = size();
+    placeFree(toWorld(ui.view, w, h, g.start));
   }
   updateCursor();
 }
@@ -887,7 +917,7 @@ document.addEventListener("keydown", (ev) => {
   if (mod && key === "z") { ev.preventDefault(); if (ev.shiftKey) engine.redo(); else engine.undo(); return; }
   if (mod && key === "y") { ev.preventDefault(); engine.redo(); return; }
   if (mod || ev.altKey) return;
-  if (/^[1-6]$/.test(ev.key)) { setTool(TOOLS[Number(ev.key) - 1]); return; }
+  if (/^[1-7]$/.test(ev.key)) { setTool(TOOLS[Number(ev.key) - 1]); return; }
   if (ev.key === "Escape") { cancelPick(); select(null); exportMenu.open = false; return; }
   if ((ev.key === "Delete" || ev.key === "Backspace") && ui.selected) { ev.preventDefault(); removeObject(ui.selected); return; }
   if (key === "f") { fit(); }

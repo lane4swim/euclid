@@ -121,7 +121,7 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
       }
       case "point": {
         const p = S(d.pos!);
-        const given = obj.def.kind === "given";
+        const given = obj.def.kind === "given" || obj.def.kind === "free"; // draggable points get a ring
         if (strong) halos.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="9" fill="${pal.halo}"/>`);
         points.push(`<circle data-id="${id}" cx="${f(p.x)}" cy="${f(p.y)}" r="${strong ? 4.5 : 3.5}" fill="${color}"/>`);
         if (given && o.interactive) points.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="7.5" fill="none" stroke="${color}" stroke-width="1.5"/>`);

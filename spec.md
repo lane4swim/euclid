@@ -10,11 +10,11 @@ The site is one static page (HTML, CSS, TypeScript compiled to one JS file or in
 
 | Topic | Decision |
 | --- | --- |
-| Starting objects | Exactly two given points, A and B. Every later point is an intersection of two existing curves. |
+| Starting objects | Two given points, A and B. Later points are intersections of two existing curves, or arbitrary (free) points placed by the user. |
 | Curves | Infinite lines through two points; circles (two creation tools, see below); segments (see below). Nothing else may be intersected. |
 | Compass model | Rigid compass: a circle may take its radius from the distance of two other points. |
 | Circle tools | Both: (1) center + point on the circle; (2) center + two points whose distance is the radius. |
-| Dynamics | A and B are draggable. All dependent objects recompute live. |
+| Dynamics | A, B and arbitrary points are draggable. All dependent objects recompute live. |
 | Line display | Lines are mathematically infinite but drawn trimmed to the span of their used points plus a margin. A global toggle shows them infinite. |
 | Circle display | A new circle is shown in full. Each circle has a toggle: full circle or arc-only. In arc mode the arc extent is automatic (shortest arc covering all used intersection points on it, plus a margin). |
 | Segments | Segments between two points. They can be intersected with lines, circles and other segments, but only points on the segment itself count (see Geometry kernel). |
@@ -33,7 +33,8 @@ interface Vec { x: number; y: number }    // world coordinates, y up
 
 // Points
 type PointDef =
-  | { kind: "given"; pos: Vec }           // only A and B; the only draggable objects
+  | { kind: "given"; pos: Vec }           // only A and B; draggable
+  | { kind: "free"; pos: Vec }            // arbitrary point placed by the user; draggable
   | { kind: "intersection";
       a: ID; b: ID;                        // two curves (lines or circles), a before b in list
       pick: 0 | 1 };                       // which of the up-to-two intersections, see kernel
@@ -143,7 +144,9 @@ class Engine {
   steps(): StepView[];                                    // number, objectId, text, valid
 
   // Editing
-  moveGiven(id: "A" | "B", pos: Vec): void;               // live; recompute, no new step
+  addFreePoint(pos: Vec): Result<ID>;                     // arbitrary point; an existing point there is reused (duplicate)
+  movePoint(id: ID, pos: Vec): void;                      // A, B or a free point; live, no new step
+  moveGiven(id: "A" | "B", pos: Vec): void;               // same as movePoint for A and B
   rename(id: ID, label: string): Result<void>;
   setVisible(id: ID, visible: boolean): void;
   setColor(id: ID, color: string): void;
@@ -215,14 +218,15 @@ interface UIState {
 
 | Tool | Clicks | Engine call |
 | --- | --- | --- |
-| Move | Drag A or B; click anything else to select it | `moveGiven` |
+| Move | Drag A, B or an arbitrary point; click anything else to select it | `movePoint` |
 | Line | Point 1, point 2 | `addLine` |
 | Circle | Center, point on the circle | `addCircleThrough` |
 | Rigid circle | Center, radius point 1, radius point 2 | `addCircleRadius` |
 | Segment | Point 1, point 2 | `addSegment` |
 | Intersect | Curve 1, curve 2; then candidate 1 or 2 if there are two | `addIntersection` |
+| Point | Click empty space (an unmarked intersection is marked instead) | `addFreePoint` |
 
-Only points, including snapped intersections of two curves that are not yet marked, can be picked by the line, circle and segment tools; only lines, circles and segments by the intersect tool. Where a segment lies on a line, the line is picked. A click on something not allowed for the current pick is ignored and shows a short hint. After an intersection is created, the new point shows an inline name field with the automatic label preselected: Enter accepts, typing renames.
+Only points, including snapped intersections of two curves that are not yet marked, can be picked by the line, circle and segment tools, and a click on empty space in these tools creates an arbitrary point there, as its own step just before the new curve; only lines, circles and segments by the intersect tool. Where a segment lies on a line, the line is picked. A click on something not allowed for the current pick is ignored and shows a short hint. After an intersection is created, the new point shows an inline name field with the automatic label preselected: Enter accepts, typing renames.
 
 **Step list.** One row per object, numbered from 1 (A and B are shown as "Given" above the list). Each row shows the generated sentence, with labels in bold. Examples (English / German):
 
@@ -232,7 +236,7 @@ Only points, including snapped intersections of two curves that are not yet mark
 
 Row actions: eye (show or hide), rename, color, line width (lines, circles and segments), arc/full toggle (circles only), delete (asks first when other steps depend on it). Hovering a row highlights the object on the drawing; clicking selects it. The last row is the "current" step; undo removes it.
 
-**Keyboard.** `1`–`6` choose tools, `Esc` cancel, `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` undo and redo, `Delete` remove the selected object, `F` fit view to the construction.
+**Keyboard.** `1`–`7` choose tools, `Esc` cancel, `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` undo and redo, `Delete` remove the selected object, `F` fit view to the construction.
 
 **Errors and hints.** Every `ErrorCode` has a message in both languages shown near the drawing for a few seconds, for example "The circles do not intersect" with the offending objects highlighted.
 
@@ -301,3 +305,5 @@ The spec above assumes the default shown for each question. All questions are no
 **Follow-up to question 2.** Decided: a snapped intersection becomes a regular labelled point with its own numbered step, created just before the new line, circle or segment. If two curves have two intersections, the snap shows both as numbered candidates and you click one.
 
 **Follow-up: intersecting segments.** Decided (Nov 1, 2026): segments are no longer display-only. They can be intersected with lines, circles and other segments, counting only points on the segment itself.
+
+**Follow-up: arbitrary points.** Decided (Nov 1, 2026): the user can place arbitrary (free) points anywhere in the plane, with the Point tool or by clicking empty space in the line, circle and segment tools. They are numbered steps ("Arbitrary point C"), draggable like A and B, and saved with their position. Points bound to a curve remain out of scope; a click on a curve with the Point tool shows a hint instead.
