@@ -3,7 +3,7 @@
 import { Engine } from "../engine.js";
 import { format, formatParts, messages, type Lang, type MessageId } from "../i18n.js";
 import { dist, type Vec } from "../kernel.js";
-import { deps, type ErrorCode, type GeoObject, type ID, type Result } from "../model.js";
+import { DEFAULT_WIDTH, deps, hasWidth, type ErrorCode, type GeoObject, type ID, type Result } from "../model.js";
 import { arcExtent } from "../render-geom.js";
 import { colorOf, drawSVG, drawnLine, exportSVG, fitView, toScreen, toWorld, type Ghost, type Palette, type View } from "./draw.js";
 
@@ -256,13 +256,13 @@ function hitTest(q: Vec, touch: boolean): Hit | null {
   // Lines and circles first: a segment lying on a line must not hide that line.
   for (const o of engine.active) {
     if (o.type !== "line" && o.type !== "circle") continue;
-    const d = objectDistance(o, q, w, h);
+    const d = objectDistance(o, q, w, h) - (o.view.width ?? DEFAULT_WIDTH[o.type]) / 2;
     if (d <= R && (!best || d < best.d)) best = { d, hit: { kind: "curve", id: o.id } };
   }
   if (best) return best.hit;
   for (const o of engine.active) {
     if (o.type !== "segment") continue;
-    const d = objectDistance(o, q, w, h);
+    const d = objectDistance(o, q, w, h) - (o.view.width ?? DEFAULT_WIDTH.segment) / 2;
     if (d <= R && (!best || d < best.d)) best = { d, hit: { kind: "segment", id: o.id } };
   }
   return best?.hit ?? null;
@@ -600,6 +600,28 @@ function startRowRename(li: HTMLElement, id: ID): void {
   input.addEventListener("click", (ev) => ev.stopPropagation());
 }
 
+const WIDTH_CHOICES = [0.5, 0.75, 1, 1.25, 1.6, 2, 2.5, 3, 4, 6, 8];
+
+function widthSelect(o: GeoObject): HTMLSelectElement {
+  const type = o.type as "line" | "circle" | "segment";
+  const current = o.view.width ?? DEFAULT_WIDTH[type];
+  const sel = document.createElement("select");
+  sel.className = "width";
+  sel.title = t("ui.width");
+  sel.setAttribute("aria-label", `${t("ui.width")} ${o.label}`);
+  const values = WIDTH_CHOICES.includes(current) ? WIDTH_CHOICES : [...WIDTH_CHOICES, current].sort((a, b) => a - b);
+  for (const v of values) {
+    const opt = document.createElement("option");
+    opt.value = String(v);
+    opt.textContent = `${v.toLocaleString(ui.settings.lang)} px`;
+    opt.selected = v === current;
+    sel.append(opt);
+  }
+  sel.addEventListener("click", (ev) => ev.stopPropagation());
+  sel.addEventListener("change", () => engine.setWidth(o.id, Number(sel.value)));
+  return sel;
+}
+
 function toHex(c: string): string {
   return /^#[0-9a-f]{6}$/i.test(c) ? c : "#000000";
 }
@@ -649,6 +671,7 @@ function renderSteps(): void {
     color.addEventListener("click", (ev) => ev.stopPropagation());
     color.addEventListener("change", () => engine.setColor(o.id, color.value));
     actions.append(color);
+    if (hasWidth(o.type)) actions.append(widthSelect(o));
     if (o.type === "circle") {
       const arc = !!o.view.arcMode;
       actions.append(iconButton(arc ? ICONS.full : ICONS.arc, t(arc ? "ui.fullMode" : "ui.arcMode"), () => engine.setArcMode(o.id, !arc), arc));

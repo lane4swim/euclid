@@ -71,6 +71,7 @@ export const messages = {
   "ui.hide": { de: "Ausblenden", en: "Hide" },
   "ui.rename": { de: "Umbenennen", en: "Rename" },
   "ui.color": { de: "Farbe", en: "Color" },
+  "ui.width": { de: "Linienstärke", en: "Line width" },
   "ui.arcMode": { de: "Nur Bogen zeigen", en: "Show arc only" },
   "ui.fullMode": { de: "Vollkreis zeigen", en: "Show full circle" },
   "ui.delete": { de: "Löschen", en: "Delete" },

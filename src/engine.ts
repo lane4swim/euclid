@@ -8,7 +8,7 @@ import {
 } from "./kernel.js";
 import { formatParts, partsToString, type Lang, type TextPart } from "./i18n.js";
 import {
-  deps, isCurve, type CircleDef, type CurveObject, type Derived, type ErrorCode, type GeoObject,
+  deps, hasWidth, isCurve, isValidWidth, type CircleDef, type CurveObject, type Derived, type ErrorCode, type GeoObject,
   type ID, type InvalidReason, type LineObject, type ObjectType, type SegmentObject, type PointObject, type Result,
   type SavedFile,
 } from "./model.js";
@@ -280,6 +280,13 @@ export class Engine {
   setArcMode(circle: ID, arcMode: boolean): void {
     const o = this.get(circle);
     if (o && o.type === "circle" && !!o.view.arcMode !== arcMode) this.mutate("edit", [circle], () => { this.get(circle)!.view.arcMode = arcMode; });
+  }
+
+  /** Stroke width in px for a line, circle or segment (MIN_WIDTH…MAX_WIDTH); other values are ignored. */
+  setWidth(id: ID, width: number): void {
+    const o = this.get(id);
+    if (!o || !hasWidth(o.type) || !isValidWidth(width) || o.view.width === width) return;
+    this.mutate("edit", [id], () => { this.get(id)!.view.width = width; });
   }
 
   /** Remove an object and everything that depends on it. Returns all removed ids. */
@@ -718,7 +725,12 @@ export function validateFile(data: unknown): { objects: GeoObject[]; cursor: num
     if (!isObj(def)) return `${where} (${id}): definition missing`;
     if (!isObj(view) || typeof view.visible !== "boolean" || !isStr(view.color)) return `${where} (${id}): view flags invalid`;
     if (view.arcMode !== undefined && typeof view.arcMode !== "boolean") return `${where} (${id}): arcMode invalid`;
-    const cleanView = { visible: view.visible, color: view.color, ...(type === "circle" ? { arcMode: !!view.arcMode } : {}) };
+    if (view.width !== undefined && (type === "point" || !isValidWidth(view.width))) return `${where} (${id}): width invalid`;
+    const cleanView = {
+      visible: view.visible, color: view.color,
+      ...(type === "circle" ? { arcMode: !!view.arcMode } : {}),
+      ...(view.width !== undefined ? { width: view.width as number } : {}),
+    };
 
     const ref = (k: string, want: ObjectType[]): string | null => {
       const v = def[k];

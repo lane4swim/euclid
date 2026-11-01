@@ -261,3 +261,42 @@ test("a saved point outside its segment loads as invalid with reason outside-seg
   assert.equal(d.reason, "outside-segment");
   assert.equal(f.steps("en").at(-1)!.reason, "outside-segment");
 });
+
+test("line width: set, undo/redo, save/load and validation", () => {
+  const { e, k1, C, D } = vesica();
+  const g = val(e.addLine(C, D));
+  const s = val(e.addSegment("A", "B"));
+  assert.equal(e.get(g)!.view.width, undefined, "default width is not stored");
+  e.setWidth(g, 4);
+  e.setWidth(k1, 0.5);
+  e.setWidth(s, 3);
+  assert.equal(e.get(g)!.view.width, 4);
+  e.undo();
+  assert.equal(e.get(s)!.view.width, undefined);
+  e.redo();
+  assert.equal(e.get(s)!.view.width, 3);
+
+  // Out of range, non-finite, and points are ignored without a history entry.
+  const before = e.canRedo();
+  e.setWidth(g, 0);
+  e.setWidth(g, 100);
+  e.setWidth(g, Number.NaN);
+  e.setWidth(C, 2);
+  assert.equal(e.get(g)!.view.width, 4);
+  assert.equal(e.get(C)!.view.width, undefined);
+  assert.equal(e.canRedo(), before);
+
+  const f = val(Engine.fromJSON(JSON.stringify(e.toJSON())));
+  assert.equal(f.get(g)!.view.width, 4);
+  assert.equal(f.get(k1)!.view.width, 0.5);
+
+  const bad = (mut: (file: any) => void) => {
+    const file = structuredClone(e.toJSON()) as any;
+    mut(file);
+    const r = Engine.fromJSON(file);
+    assert.ok(!r.ok && /width invalid/.test(r.detail ?? ""), JSON.stringify(r));
+  };
+  bad((file) => { file.objects.find((o: any) => o.id === g).view.width = 50; });
+  bad((file) => { file.objects.find((o: any) => o.id === g).view.width = "2"; });
+  bad((file) => { file.objects.find((o: any) => o.id === C).view.width = 2; });
+});

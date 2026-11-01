@@ -51,6 +51,7 @@ interface ViewFlags {
   visible: boolean;
   color: string;                           // CSS color
   arcMode?: boolean;                       // circles only: false = full circle (default)
+  width?: number;                          // lines, circles, segments: stroke width in px (0.25–12); absent = default
 }
 
 interface GeoObject {
@@ -147,6 +148,7 @@ class Engine {
   setVisible(id: ID, visible: boolean): void;
   setColor(id: ID, color: string): void;
   setArcMode(circle: ID, arcMode: boolean): void;
+  setWidth(id: ID, width: number): void;                  // lines, circles, segments
   remove(id: ID): Result<ID[]>;                           // returns all ids removed with it
   dependentsOf(id: ID): ID[];                             // for the confirm dialog
 
@@ -164,7 +166,7 @@ class Engine {
 Behaviour that is easy to get wrong:
 
 - **`addIntersection` and existing points.** If the chosen intersection coincides with an existing point (within eps), return that point's id with `duplicate` information instead of creating one. The UI treats this as "selected", not as an error.
-- **History.** `undo` removes the last object, or reverts the last `moveGiven`, rename, visibility, color or arc-mode change. A whole mouse drag of A or B counts as one history entry. Creating anything after an undo clears the redo stack.
+- **History.** `undo` removes the last object, or reverts the last `moveGiven`, rename, visibility, color, line-width or arc-mode change. A whole mouse drag of A or B counts as one history entry. Creating anything after an undo clears the redo stack.
 - **`recompute` order.** It walks `objects` once, in order; invalid dependencies make the object invalid without exceptions. It then computes `usedPoints` for each curve and, from them, the line `span` and circle `arc` used by rendering.
 - **Determinism.** `fromJSON(toJSON(e))` must produce identical `derived` values. The saved file contains definitions only.
 
@@ -228,7 +230,7 @@ Only points, including snapped intersections of two curves that are not yet mark
 - 2. Circle k2 with center B through A / Kreis k2 um B durch A
 - 3. Intersection of k1 and k2, left of A→B: point C / Schnittpunkt von k1 und k2, links von A→B: Punkt C
 
-Row actions: eye (show or hide), rename, color, arc/full toggle (circles only), delete (asks first when other steps depend on it). Hovering a row highlights the object on the drawing; clicking selects it. The last row is the "current" step; undo removes it.
+Row actions: eye (show or hide), rename, color, line width (lines, circles and segments), arc/full toggle (circles only), delete (asks first when other steps depend on it). Hovering a row highlights the object on the drawing; clicking selects it. The last row is the "current" step; undo removes it.
 
 **Keyboard.** `1`–`6` choose tools, `Esc` cancel, `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` undo and redo, `Delete` remove the selected object, `F` fit view to the construction.
 

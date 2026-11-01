@@ -3,7 +3,7 @@
 
 import { DEFAULT_COLORS, type Engine } from "../engine.js";
 import { linePoint, type Vec } from "../kernel.js";
-import type { GeoObject, ID } from "../model.js";
+import { DEFAULT_WIDTH, type GeoObject, type ID } from "../model.js";
 import { arcExtent, lineExtent, type Rect } from "../render-geom.js";
 
 export interface View { origin: Vec; scale: number }
@@ -87,14 +87,16 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
     const isCur = o.current === obj.id;
     const color = isCur ? pal.accent : colorOf(obj, pal);
     const strong = hl.has(obj.id) || o.hover === obj.id;
+    const base = obj.type === "point" ? 0 : obj.view.width ?? DEFAULT_WIDTH[obj.type];
+    const sw = f(strong ? base + 0.9 : base), hw = f(base + 6);
     const id = esc(obj.id);
 
     switch (obj.type) {
       case "segment": {
         const a = S(e.pos(obj.def.p1)!), b = S(e.pos(obj.def.p2)!);
         const geom = `x1="${f(a.x)}" y1="${f(a.y)}" x2="${f(b.x)}" y2="${f(b.y)}"`;
-        if (strong) halos.push(`<line ${geom} stroke="${pal.halo}" stroke-width="7" stroke-linecap="round"/>`);
-        segs.push(`<line data-id="${id}" ${geom} stroke="${color}" stroke-width="${strong ? 2 : 1.25}" stroke-linecap="round"/>`);
+        if (strong) halos.push(`<line ${geom} stroke="${pal.halo}" stroke-width="${hw}" stroke-linecap="round"/>`);
+        segs.push(`<line data-id="${id}" ${geom} stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`);
         break;
       }
       case "line": {
@@ -102,8 +104,8 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
         if (!ends) break;
         const a = S(ends[0]), b = S(ends[1]);
         const geom = `x1="${f(a.x)}" y1="${f(a.y)}" x2="${f(b.x)}" y2="${f(b.y)}"`;
-        if (strong) halos.push(`<line ${geom} stroke="${pal.halo}" stroke-width="8" stroke-linecap="round"/>`);
-        curves.push(`<line data-id="${id}" ${geom} stroke="${color}" stroke-width="${strong ? 2.5 : 1.6}" stroke-linecap="round"/>`);
+        if (strong) halos.push(`<line ${geom} stroke="${pal.halo}" stroke-width="${hw}" stroke-linecap="round"/>`);
+        curves.push(`<line data-id="${id}" ${geom} stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`);
         break;
       }
       case "circle": {
@@ -113,8 +115,8 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
         const shape = arc
           ? `<path d="${arcPath(cs.x, cs.y, r, arc.start, arc.end)}" fill="none" STROKE stroke-linecap="round"/>`
           : `<circle cx="${f(cs.x)}" cy="${f(cs.y)}" r="${f(r)}" fill="none" STROKE/>`;
-        if (strong) halos.push(shape.replace("STROKE", `stroke="${pal.halo}" stroke-width="8"`));
-        curves.push(shape.replace("STROKE", `data-id="${id}" stroke="${color}" stroke-width="${strong ? 2.5 : 1.6}"`));
+        if (strong) halos.push(shape.replace("STROKE", `stroke="${pal.halo}" stroke-width="${hw}"`));
+        curves.push(shape.replace("STROKE", `data-id="${id}" stroke="${color}" stroke-width="${sw}"`));
         break;
       }
       case "point": {

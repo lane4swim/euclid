@@ -21,6 +21,7 @@ export interface ViewFlags {
   visible: boolean;
   color: string;
   arcMode?: boolean;
+  width?: number;                          // lines, circles, segments: stroke width in px; absent = default
 }
 
 interface Base<T extends string, D> {
@@ -67,6 +68,14 @@ export interface SavedFile {
   objects: GeoObject[];
   cursor: number;
 }
+
+/** Default stroke widths in screen pixels, and the allowed range for `ViewFlags.width`. */
+export const DEFAULT_WIDTH = { line: 1.6, circle: 1.6, segment: 1.25 } as const;
+export const MIN_WIDTH = 0.25;
+export const MAX_WIDTH = 12;
+
+export const hasWidth = (type: ObjectType): type is "line" | "circle" | "segment" => type !== "point";
+export const isValidWidth = (w: unknown): w is number => typeof w === "number" && Number.isFinite(w) && w >= MIN_WIDTH && w <= MAX_WIDTH;
 
 /** Ids named in an object's definition. */
 export function deps(obj: GeoObject): ID[] {
