@@ -2,7 +2,7 @@
 // No DOM access; runs under Node. See spec.md, "Engine API".
 
 import {
-  circleFromDef, coveringArc, dist, distToLine, epsFor, intersectCircleCircle,
+  circleFromDef, coveringArc, normAngle, dist, distToLine, epsFor, intersectCircleCircle,
   intersectLineCircle, intersectLineLine, lineFromPoints, lineParam, onCircle,
   sameCircle, sameLine, samePoint, type Circle, type Line, type Vec,
 } from "./kernel.js";
@@ -238,6 +238,34 @@ export class Engine {
     });
   }
 
+  /**
+   * Add an arbitrary point bound to a line, circle or segment, at the point of
+   * the curve nearest to `pos`. If an existing point is already there, that
+   * point's id is returned with `duplicate: true`.
+   */
+  addPointOnCurve(curve: ID, pos: Vec): Result<ID> {
+    const o = this.get(curve);
+    if (!o) return fail("unknown-id", [curve]);
+    if (!isCurve(o)) return fail("not-a-curve", [curve]);
+    if (!this.derived.get(curve)?.valid) return fail("unknown-id", [curve]);
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return fail("unknown-id", [curve]);
+    const frame = this.curveFrame(o)!;
+    const t = paramOf(frame, pos);
+    const existing = this.findPointAt(pointAt(frame, t));
+    if (existing) return ok(existing, true);
+    return this.addObject({
+      id: this.nextId("point"), type: "point", label: this.nextPointLabel(),
+      def: { kind: "onCurve", curve, t }, view: { visible: true, color: DEFAULT_COLORS.point },
+    });
+  }
+
+  /** The point of a valid line, circle or segment nearest to `pos` (segments: within the segment). */
+  projectOnCurve(curve: ID, pos: Vec): Vec | null {
+    const o = this.get(curve);
+    const frame = o && isCurve(o) && this.derived.get(curve)?.valid ? this.curveFrame(o) : null;
+    return frame ? pointAt(frame, paramOf(frame, pos)) : null;
+  }
+
   // ---------------------------------------------------------------- editing
 
   /** Start a drag gesture: all movePoint calls until endMove form one history entry. */
@@ -255,27 +283,41 @@ export class Engine {
     this.pushEntry({ kind: "snapshot", before, after: this.snapshot() });
   }
 
-  /** True for points the user may drag: the given points A and B, and free points. */
+  /** True for points the user may drag: A and B, free points, and points on curves (along their curve). */
   isDraggable(id: ID): boolean {
     const o = this.get(id);
-    return !!o && o.type === "point" && (o.def.kind === "given" || o.def.kind === "free");
+    return !!o && o.type === "point" && o.def.kind !== "intersection";
   }
 
-  /** Move a draggable point (A, B or a free point); live during a gesture, otherwise one history entry. */
+  /**
+   * Move a draggable point towards `pos`: A, B and free points go there;
+   * a point on a curve goes to the nearest point of its curve.
+   * Live during a gesture, otherwise one history entry.
+   */
   movePoint(id: ID, pos: Vec): void {
     const o = this.get(id);
-    if (!o || o.type !== "point" || (o.def.kind !== "given" && o.def.kind !== "free")) return;
-    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+    if (!o || o.type !== "point" || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
     const def = o.def;
-    if (def.pos.x === pos.x && def.pos.y === pos.y) return;
+    let apply: (d: PointObject["def"]) => void;
+    if (def.kind === "given" || def.kind === "free") {
+      if (def.pos.x === pos.x && def.pos.y === pos.y) return;
+      apply = (d) => { (d as { pos: Vec }).pos = { x: pos.x, y: pos.y }; };
+    } else if (def.kind === "onCurve") {
+      const c = this.get(def.curve);
+      const frame = c && this.derived.get(def.curve)?.valid ? this.curveFrame(c) : null;
+      if (!frame) return;
+      const t = paramOf(frame, pos);
+      if (t === def.t) return;
+      apply = (d) => { (d as { t: number }).t = t; };
+    } else return;
     if (this.gesture) {
-      def.pos = { x: pos.x, y: pos.y };
+      apply(def);
       this.gestureMoved = true;
       this.recompute();
       this.emit({ kind: "move", ids: [id] });
       return;
     }
-    this.mutate("move", [id], () => { (this.get(id)!.def as { pos: Vec }).pos = { x: pos.x, y: pos.y }; });
+    this.mutate("move", [id], () => apply((this.get(id) as PointObject).def));
   }
 
   /** Kept for the spec's API: move A or B. */
@@ -402,7 +444,9 @@ export class Engine {
       else if (o.def.kind === "throughPoint") byDef.add(o.def.through);
       const used: ID[] = [];
       for (const p of pts) {
-        const defined = byDef.has(p.id) || (p.def.kind === "intersection" && (p.def.a === o.id || p.def.b === o.id));
+        const defined = byDef.has(p.id)
+          || (p.def.kind === "intersection" && (p.def.a === o.id || p.def.b === o.id))
+          || (p.def.kind === "onCurve" && p.def.curve === o.id);
         let lies = dd.line ? distToLine(dd.line, p.pos) < onTol : onCircle(dd.circle!, p.pos, onTol);
         if (lies && dd.segment && dd.line) {
           const t = lineParam(dd.line, p.pos);
@@ -570,6 +614,22 @@ export class Engine {
     return true;
   }
 
+  /** Parameter frame of a line, circle or segment from the given derived values; null if invalid. */
+  private curveFrame(c: GeoObject, d: Map<ID, Derived> = this.derived): CurveFrame | null {
+    if (c.type === "line" || c.type === "segment") {
+      const p = d.get(c.def.p1)?.pos, q = d.get(c.def.p2)?.pos;
+      if (!p || !q || samePoint(p, q, this.eps)) return null;
+      return { kind: "line", p, v: { x: q.x - p.x, y: q.y - p.y }, clamp: c.type === "segment" };
+    }
+    if (c.type !== "circle") return null;
+    const circle = d.get(c.id)?.circle;
+    if (!circle) return null;
+    const [from, to] = c.def.kind === "throughPoint" ? [c.def.center, c.def.through] : [c.def.r1, c.def.r2];
+    const a = d.get(from)?.pos, b = d.get(to)?.pos;
+    if (!a || !b) return null;
+    return { kind: "circle", center: circle.center, r: circle.r, a0: Math.atan2(b.y - a.y, b.x - a.x) };
+  }
+
   private givenPos(i: 0 | 1): Vec {
     const def = this.objects[i].def;
     return (def as { pos: Vec }).pos;
@@ -592,6 +652,10 @@ export class Engine {
     switch (o.type) {
       case "point": {
         if (o.def.kind === "given" || o.def.kind === "free") return { valid: true, pos: { ...o.def.pos } };
+        if (o.def.kind === "onCurve") {
+          const frame = this.curveFrame(this.get(o.def.curve)!, d);
+          return frame ? { valid: true, pos: pointAt(frame, o.def.t) } : { valid: false, reason: "dependency" };
+        }
         const da = d.get(o.def.a)!, db = d.get(o.def.b)!;
         const res = intersectGeom(da, db, this.eps);
         if (res.points.length === 0) return { valid: false, reason: res.reason ?? "no-intersection" };
@@ -672,6 +736,7 @@ export class Engine {
       case "point": {
         if (o.def.kind === "given") { parts = [{ text: o.label, slot: "label" }]; break; }
         if (o.def.kind === "free") { parts = formatParts(lang, "step.free", { label: o.label }); break; }
+        if (o.def.kind === "onCurve") { parts = formatParts(lang, "step.onCurve", { label: o.label, curve: this.label(o.def.curve) }); break; }
         const a = this.get(o.def.a) as CurveObject;
         const b = this.get(o.def.b) as CurveObject;
         const side = this.sideParts(a, b, o.def.pick, lang);
@@ -696,6 +761,27 @@ export class Engine {
     const line = (a.type === "circle" ? b : a) as LineObject | SegmentObject;
     return formatParts(lang, pick === 0 ? "side.first" : "side.second", { from: this.label(line.def.p1), to: this.label(line.def.p2) });
   }
+}
+
+type CurveFrame =
+  | { kind: "line"; p: Vec; v: Vec; clamp: boolean }
+  | { kind: "circle"; center: Vec; r: number; a0: number };
+
+function pointAt(f: CurveFrame, t: number): Vec {
+  if (f.kind === "line") {
+    const s = f.clamp ? Math.min(1, Math.max(0, t)) : t;
+    return { x: f.p.x + s * f.v.x, y: f.p.y + s * f.v.y };
+  }
+  return { x: f.center.x + f.r * Math.cos(f.a0 + t), y: f.center.y + f.r * Math.sin(f.a0 + t) };
+}
+
+function paramOf(f: CurveFrame, pos: Vec): number {
+  if (f.kind === "line") {
+    const t = ((pos.x - f.p.x) * f.v.x + (pos.y - f.p.y) * f.v.y) / (f.v.x * f.v.x + f.v.y * f.v.y);
+    return f.clamp ? Math.min(1, Math.max(0, t)) : t;
+  }
+  if (Math.hypot(pos.x - f.center.x, pos.y - f.center.y) === 0) return 0;
+  return normAngle(Math.atan2(pos.y - f.center.y, pos.x - f.center.x) - f.a0);
 }
 
 /** Intersect two derived curves, with ordering by list order of (a, b). */
@@ -785,6 +871,11 @@ export function validateFile(data: unknown): { objects: GeoObject[]; cursor: num
         if (!isVec(def.pos)) return `${where} (${id}): position invalid`;
         const p = def.pos as { x: number; y: number };
         obj = { id, type, label, def: { kind: "given", pos: { x: p.x, y: p.y } }, view: cleanView };
+      } else if (def.kind === "onCurve") {
+        const e = ref("curve", ["line", "circle", "segment"]);
+        if (e) return e;
+        if (typeof def.t !== "number" || !Number.isFinite(def.t)) return `${where} (${id}): t must be a finite number`;
+        obj = { id, type, label, def: { kind: "onCurve", curve: def.curve as ID, t: def.t }, view: cleanView };
       } else if (def.kind === "free") {
         if (!isVec(def.pos)) return `${where} (${id}): position invalid`;
         const p = def.pos as { x: number; y: number };

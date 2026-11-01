@@ -16,8 +16,8 @@ const POINT_TOOLS = new Set<Tool>(["line", "circle", "circleRigid", "segment"]);
 type Theme = "auto" | "light" | "dark";
 
 interface Snap { a: ID; b: ID; pick: 0 | 1; pos: Vec }
-/** A chosen point: an existing one, an unmarked intersection, or a new free point at a position. */
-type Pick = { id: ID } | { snap: Snap } | { free: Vec };
+/** A chosen point: an existing one, an unmarked intersection, a new free point, or a new point on a curve. */
+type Pick = { id: ID } | { snap: Snap } | { free: Vec } | { onCurve: ID; pos: Vec };
 type Hit =
   | { kind: "point" | "curve" | "segment"; id: ID }
   | { kind: "snap"; snap: Snap }
@@ -113,14 +113,24 @@ function scheduleSteps(): void {
 
 function pickPos(p: Pick): Vec | undefined {
   if ("id" in p) return engine.pos(p.id);
-  return "snap" in p ? p.snap.pos : p.free;
+  if ("snap" in p) return p.snap.pos;
+  if ("onCurve" in p) return engine.projectOnCurve(p.onCurve, p.pos) ?? undefined;
+  return p.free;
 }
 
 function hitPos(h: Hit | null): Vec | undefined {
   if (!h) return undefined;
   if (h.kind === "snap") return h.snap.pos;
   if (h.kind === "candidate") return h.pos;
-  return h.kind === "point" ? engine.pos(h.id) : undefined;
+  if (h.kind === "point") return engine.pos(h.id);
+  // A curve under the cursor in a point-taking tool: where a new point on it would go.
+  if (takesPoints() && ui.pointer) return engine.projectOnCurve(h.id, ui.pointer) ?? undefined;
+  return undefined;
+}
+
+/** Tools whose clicks produce points (and so may create points on curves or in empty space). */
+function takesPoints(): boolean {
+  return ui.tool === "point" || POINT_TOOLS.has(ui.tool);
 }
 
 function ghost(): Ghost | null {
@@ -156,7 +166,8 @@ function draw(): void {
   svg.innerHTML = drawSVG(engine, {
     view: ui.view, width: w, height: h, palette: palette(), infiniteLines: ui.settings.showInfiniteLines,
     interactive: true, hover, highlight: hl, current: last, ghost: ghost(),
-    snap: ui.hover?.kind === "snap" ? ui.hover.snap.pos : null,
+    snap: ui.hover?.kind === "snap" ? ui.hover.snap.pos
+      : ui.hover && (ui.hover.kind === "curve" || ui.hover.kind === "segment") && takesPoints() ? hitPos(ui.hover) ?? null : null,
     candidates: ui.candidates.map((c) => ({ pos: c.pos, n: c.pick + 1, hover: ui.hover?.kind === "candidate" && ui.hover.pick === c.pick })),
   });
   updateCursor();
@@ -273,7 +284,7 @@ function hitTest(q: Vec, touch: boolean): Hit | null {
 
 function allowed(h: Hit): boolean {
   if (ui.tool === "move") return h.kind === "point" || h.kind === "curve" || h.kind === "segment";
-  if (POINT_TOOLS.has(ui.tool) || ui.tool === "point") return h.kind === "point" || h.kind === "snap";
+  if (takesPoints()) return h.kind !== "candidate"; // points, intersections, and curves (a new point on them)
   return h.kind === "curve" || h.kind === "segment" || h.kind === "snap" || h.kind === "candidate";
 }
 
@@ -323,15 +334,19 @@ function select(id: ID | null): void {
   scheduleDraw();
 }
 
-function handlePick(h: Hit): void {
+/** `at` is the click position in world coordinates. */
+function handlePick(h: Hit, at: Vec): void {
   if (ui.tool === "point") {
-    // On an existing point: select it. On an unmarked intersection: mark it.
+    // Existing point: select it. Unmarked intersection: mark it. Curve: a new point on it.
     if (h.kind === "snap") createIntersection(h.snap.a, h.snap.b, h.snap.pick);
     else if (h.kind === "point") { select(h.id); toast(t("ui.existingPoint", { label: label(h.id) }), "info", [h.id]); }
+    else if (h.kind === "curve" || h.kind === "segment") announcePoint(engine.addPointOnCurve(h.id, at));
     return;
   }
   if (POINT_TOOLS.has(ui.tool)) {
-    ui.picked.push(h.kind === "snap" ? { snap: h.snap } : { id: (h as { id: ID }).id });
+    ui.picked.push(h.kind === "snap" ? { snap: h.snap }
+      : h.kind === "curve" || h.kind === "segment" ? { onCurve: h.id, pos: at }
+      : { id: (h as { id: ID }).id });
     const need = ui.tool === "circleRigid" ? 3 : 2;
     if (ui.picked.length >= need) completePointTool();
     updateStatus();
@@ -365,7 +380,9 @@ function completePointTool(): void {
   ui.picked = []; // engine events fire below; the pick sequence is finished
   for (const p of picks) {
     if ("id" in p) { ids.push(p.id); continue; }
-    const r = "snap" in p ? engine.addIntersection(p.snap.a, p.snap.b, p.snap.pick) : engine.addFreePoint(p.free);
+    const r = "snap" in p ? engine.addIntersection(p.snap.a, p.snap.b, p.snap.pick)
+      : "onCurve" in p ? engine.addPointOnCurve(p.onCurve, p.pos)
+      : engine.addFreePoint(p.free);
     if (!r.ok) { rollback(); showError(r); cancelPick(); return; }
     if (!r.duplicate) created.push(r.value);
     ids.push(r.value);
@@ -380,15 +397,16 @@ function completePointTool(): void {
   if (!r.ok) { rollback(); showError(r); }
 }
 
+/** After the point tool made (or reused) a point: name field for a new one, selection for an existing one. */
+function announcePoint(r: Result<ID>): void {
+  if (!r.ok) showError(r);
+  else if (r.duplicate) { select(r.value); toast(t("ui.existingPoint", { label: label(r.value) }), "info", [r.value]); }
+  else { const id = r.value; requestAnimationFrame(() => openNameField(id)); }
+}
+
 /** Empty space was clicked: the point tool places a free point; the other point tools use one as their next pick. */
 function placeFree(pos: Vec): void {
-  if (ui.tool === "point") {
-    const r = engine.addFreePoint(pos);
-    if (!r.ok) showError(r);
-    else if (r.duplicate) { select(r.value); toast(t("ui.existingPoint", { label: label(r.value) }), "info", [r.value]); }
-    else { const id = r.value; requestAnimationFrame(() => openNameField(id)); }
-    return;
-  }
+  if (ui.tool === "point") { announcePoint(engine.addFreePoint(pos)); return; }
   if (!POINT_TOOLS.has(ui.tool)) return;
   ui.picked.push({ free: pos });
   if (ui.picked.length >= (ui.tool === "circleRigid" ? 3 : 2)) completePointTool();
@@ -491,12 +509,11 @@ svg.addEventListener("pointerdown", (ev) => {
       return;
     }
   } else if (hit) {
-    if (allowed(hit)) { handlePick(hit); gesture = null; return; }
-    const hint = ui.tool === "point" ? "hint.freeNotOnCurve" : POINT_TOOLS.has(ui.tool) ? "hint.needPoint" : "hint.needCurve";
-    toast(t(hint), "info");
+    if (allowed(hit)) { const { w, h } = size(); handlePick(hit, toWorld(ui.view, w, h, q)); gesture = null; return; }
+    toast(t(takesPoints() ? "hint.needPoint" : "hint.needCurve"), "info");
   }
   // Empty space: drag pans; a click without movement places a free point (point-taking tools only).
-  const place = !hit && (ui.tool === "point" || POINT_TOOLS.has(ui.tool));
+  const place = !hit && takesPoints();
   gesture = { kind: "pan", start: q, origin: { ...ui.view.origin }, moved: false, hit, place };
 });
 
