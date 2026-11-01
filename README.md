@@ -4,25 +4,42 @@ A straightedge-and-compass construction site: a static web page where you build 
 
 ## Status
 
-The first milestone is done: the **geometry kernel and engine**, with the spec's acceptance tests. The spec requires these to pass before interface work starts. The UI (SVG drawing, tools, step list, export) comes next.
+The geometry kernel, engine and browser UI are implemented. The UI includes:
 
-| Module | Contents |
+- six tools (keys 1–6), with hover, snapping to unmarked intersections, dashed ghost previews, and numbered candidates for choosing between two intersections;
+- dragging A and B with live updates, pan by dragging empty space, zoom with the wheel or a pinch;
+- the step list with show/hide, rename, color, arc/full toggle, and delete (with confirmation when other steps depend on the object);
+- undo/redo, JSON save/open, SVG and PNG export (white or transparent background), and autosave in the browser;
+- German and English, and light, dark and automatic themes.
+
+| Path | Contents |
 | --- | --- |
 | `src/kernel.ts` | Pure geometry: line/circle intersections with stable ordering, tolerances, covering arcs |
 | `src/model.ts` | Data model types (`GeoObject`, `Derived`, `Result`, `SavedFile`) |
 | `src/engine.ts` | `Engine` class: creation, editing, delete with dependents, undo/redo, recompute, JSON save/load with validation, step texts |
 | `src/i18n.ts` | German/English message table and slot templates |
 | `src/render-geom.ts` | View-dependent drawing extents: line margin, arc margin, clipping lines to the viewport |
+| `src/ui/draw.ts` | The single draw function for the screen and the SVG export |
+| `src/ui/app.ts` | Browser UI: tools, pointer/touch/keyboard input, step list, files, export |
+| `web/` | `index.html`, `styles.css`, favicon |
 | `test/` | Acceptance tests 1–9 from the spec plus engine unit tests |
 
-None of these touch the DOM, so they run under Node.
+Everything outside `src/ui/` has no browser dependencies and runs under Node. `tsconfig.json` (Node, tests) leaves out `src/ui/`. `tsconfig.web.json` adds the DOM types for the site build.
 
 ## Development
 
 ```sh
 npm install
-npm test      # compiles with tsc, runs node --test
+npm test        # compiles with tsc, runs node --test
+npm run build   # writes the static site to site/
+npm run serve   # builds, then serves site/ on http://localhost:8080
 ```
+
+The site is plain ES modules with no runtime dependencies. It must be served over HTTP; browsers block module scripts from `file://`.
+
+## Deployment
+
+`.github/workflows/pages.yml` runs the tests and builds `site/` on every push and pull request. Pushes to `main` are then deployed to GitHub Pages. To enable it once: in the repository go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**. The page then appears at `https://<owner>.github.io/euclid/`.
 
 ## Implementation notes and spec interpretations
 
@@ -37,4 +54,6 @@ These are choices the spec leaves open. Each one is easy to change.
 - **Drags** are bracketed by `beginMove()` / `endMove()` and make one history entry. A `moveGiven` call outside a bracket makes its own entry.
 - **Extra error codes**: `protected` (A and B cannot be deleted) and `bad-file` (load failures, with a `detail` naming the first problem).
 - **Ids and labels.** Ids are `P1`, `L1`, `C1` and `S1`, and stay stable. Labels of new lines and circles follow `engine.labelLang` (`g`/`k` in German, `l`/`c` in English).
+- **Colors.** Objects that keep their default color are drawn with the current theme's color (Okabe–Ito based, with lighter variants in dark mode). A color picked in the step list is used as-is. Exports always use the light palette.
+- **Snapped points in the line, circle and segment tools** become their own steps just before the new curve. If the curve is refused (for example as a duplicate), those points are undone again.
 - **Performance.** With 111 objects, a recompute takes about 0.3 ms under Node, well inside a 60 fps frame.
