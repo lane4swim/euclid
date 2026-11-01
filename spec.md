@@ -158,6 +158,7 @@ class Engine {
   setArcMode(circle: ID, arcMode: boolean): void;
   setWidth(id: ID, width: number): void;                  // lines, circles, segments
   setFinal(id: ID, final: boolean): void;                 // any object, including A and B
+  finalIds(): ID[];                                       // marked objects, in step order
   finalIds(): ID[];
   remove(id: ID): Result<ID[]>;                           // returns all ids removed with it
   dependentsOf(id: ID): ID[];                             // for the confirm dialog
@@ -241,9 +242,11 @@ Only points, including snapped intersections of two curves that are not yet mark
 - 2. Circle k2 with center B through A / Kreis k2 um B durch A
 - 3. Intersection of k1 and k2, left of A→B: point C / Schnittpunkt von k1 und k2, links von A→B: Punkt C
 
-Row actions: eye (show or hide), rename, color, line width (lines, circles and segments), arc/full toggle (circles only), delete (asks first when other steps depend on it). Hovering a row highlights the object on the drawing; clicking selects it. While a step is selected, the steps after it are shown in a lighter color in the list and faded on the drawing, so the construction can be read as it stood at that step; selecting A or B, the last step, or nothing shows everything normally. Exports are not affected. The last row is the "current" step; undo removes it.
+Row actions: eye (show or hide), rename, color, line width (lines, circles and segments), arc/full toggle (circles only), final-figure flag, delete (asks first when other steps depend on it). Hovering a row highlights the object on the drawing; clicking selects it. While a step is selected, the steps after it are shown in a lighter color in the list and faded on the drawing, so the construction can be read as it stood at that step; selecting A or B, the last step, or nothing shows everything normally. Exports are not affected. The last construction row is the "current" step; undo removes it.
 
-**Keyboard.** `1`–`7` choose tools, `Esc` cancel, `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` undo and redo, `Delete` remove the selected object, `F` fit view to the construction.
+**Final figure.** Any object can be marked as part of the final figure (flag button in its row; key `M` toggles the selected object, which is how A and B are marked). After the last step the list shows one more numbered row, "Final figure (marked elements: k)". Selecting it shows every object that is not marked lighter, in the list and on the drawing, so the result of the construction stands out. Esc or selecting another row ends this view. Exports are not affected.
+
+**Keyboard.** `1`–`7` choose tools, `M` marks or unmarks the selected object as part of the final figure, `Esc` cancel, `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` undo and redo, `Delete` remove the selected object, `F` fit view to the construction.
 
 **Errors and hints.** Every `ErrorCode` has a message in both languages shown near the drawing for a few seconds, for example "The circles do not intersect" with the offending objects highlighted.
 
