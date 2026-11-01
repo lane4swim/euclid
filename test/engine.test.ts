@@ -179,7 +179,7 @@ test("onChange fires once per mutation and a drag is one history entry", () => {
   let n = 0;
   const off = e.onChange(() => n++);
   e.beginMove();
-  for (let i = 0; i < 10; i++) e.moveGiven("A", { x: -1 - i / 10, y: 0 });
+  for (let i = 1; i <= 10; i++) e.moveGiven("A", { x: -1 - i / 10, y: 0 }); // no-op moves emit nothing
   e.endMove();
   assert.equal(n, 10);
   e.undo();
@@ -299,4 +299,151 @@ test("line width: set, undo/redo, save/load and validation", () => {
   bad((file) => { file.objects.find((o: any) => o.id === g).view.width = 50; });
   bad((file) => { file.objects.find((o: any) => o.id === g).view.width = "2"; });
   bad((file) => { file.objects.find((o: any) => o.id === C).view.width = 2; });
+});
+
+test("free points: create, reuse, drag with dependents, undo, save/load, step text", () => {
+  const e = new Engine();
+  const P = val(e.addFreePoint({ x: 0, y: 2 }));
+  assert.equal(e.get(P)!.label, "C");
+  assert.ok(e.isDraggable(P) && e.isDraggable("A"));
+  assert.equal(e.describeStep(1, "de"), "Beliebiger Punkt C");
+  assert.equal(e.describeStep(1, "en"), "Arbitrary point C");
+
+  // A point at the position of an existing one is reused.
+  const again = e.addFreePoint({ x: 0, y: 2 });
+  assert.ok(again.ok && again.value === P && again.duplicate);
+  const onB = e.addFreePoint({ x: 1, y: 0 });
+  assert.ok(onB.ok && onB.value === "B" && onB.duplicate);
+
+  // Arbitrary line and circle through it; the intersection follows a drag.
+  const g = val(e.addLine("A", P));
+  const k = val(e.addCircleThrough(P, "B"));
+  // The circle around P through B also passes through A (both at distance √5), so take the other point.
+  const pick = e.intersections(g, k).find((c) => !c.existing)!.pick;
+  const X = val(e.addIntersection(g, k, pick));
+  assert.ok(!e.isDraggable(X), "intersection points are not draggable");
+  const before = e.pos(X)!;
+  e.beginMove();
+  e.movePoint(P, { x: 0.5, y: 3 });
+  e.movePoint(P, { x: 1, y: 4 });
+  e.endMove();
+  assert.notDeepEqual(e.pos(X), before);
+  assert.ok(e.derived.get(X)!.valid);
+  e.undo(); // the whole drag
+  assert.deepEqual(e.pos(P), { x: 0, y: 2 });
+  assert.deepEqual(e.pos(X), before);
+
+  // Non-draggable points and bad positions are ignored.
+  e.movePoint(X, { x: 9, y: 9 });
+  e.movePoint(P, { x: Number.NaN, y: 0 });
+  assert.deepEqual(e.pos(P), { x: 0, y: 2 });
+
+  // Save and load keep free points; the file validator accepts them after A and B only.
+  const f = val(Engine.fromJSON(JSON.stringify(e.toJSON())));
+  assert.deepEqual([...f.derived], [...e.derived]);
+  const file = e.toJSON() as any;
+  file.objects[2].def.pos = { x: "0", y: 2 };
+  assert.ok(!Engine.fromJSON(file).ok);
+  const swapped = e.toJSON() as any;
+  swapped.objects[1] = { ...swapped.objects[1], def: { kind: "free", pos: { x: 1, y: 0 } } };
+  assert.ok(!Engine.fromJSON(swapped).ok, "B must stay a given point");
+
+  // Deleting a free point deletes what depends on it.
+  assert.deepEqual(val(e.remove(P)), [P, g, k, X]);
+});
+
+test("a drag after undo discards the redo region", () => {
+  const e = new Engine();
+  val(e.addCircleThrough("A", "B"));
+  e.undo();
+  assert.ok(e.canRedo());
+  e.beginMove();
+  e.movePoint("B", { x: 2, y: 0 });
+  e.endMove();
+  assert.equal(e.canRedo(), false);
+  assert.equal(e.objects.length, e.cursor);
+  e.undo();
+  assert.deepEqual(e.pos("B"), { x: 1, y: 0 });
+  assert.equal(e.objects.length, 2);
+  // A click without movement records nothing.
+  e.beginMove();
+  e.endMove();
+  assert.equal(e.canUndo(), false);
+});
+
+test("points on curves: line, circle, segment; follow the curve, slide when dragged", () => {
+  const e = new Engine();
+  const near = (p: { x: number; y: number } | undefined, x: number, y: number) =>
+    assert.ok(p && Math.abs(p.x - x) < 1e-9 && Math.abs(p.y - y) < 1e-9, `expected (${x}, ${y}), got ${JSON.stringify(p)}`);
+  const g = val(e.addLine("A", "B"));
+  const k = val(e.addCircleThrough("A", "B"));     // center A, r = 2
+  const s = val(e.addSegment("A", "B"));
+
+  // Line: projected onto y = 0, stored as the fraction from A to B.
+  const P = val(e.addPointOnCurve(g, { x: 3, y: 5 }));
+  near(e.pos(P), 3, 0);
+  assert.equal((e.get(P)!.def as { t: number }).t, 2);
+  assert.equal(e.describeStep(4, "de"), "Beliebiger Punkt C auf g1");
+  assert.equal(e.describeStep(4, "en"), "Arbitrary point C on g1");
+
+  // Circle: nearest point on the circle; angle from the direction A -> B.
+  const Q = val(e.addPointOnCurve(k, { x: -1, y: 10 }));
+  near(e.pos(Q), -1, 2);
+  assert.ok(Math.abs((e.get(Q)!.def as { t: number }).t - Math.PI / 2) < 1e-12);
+
+  // Segment: clamped to the segment.
+  const R = val(e.addPointOnCurve(s, { x: 0.5, y: -3 }));
+  near(e.pos(R), 0.5, 0);
+  const atEnd = e.addPointOnCurve(s, { x: 9, y: 0 });
+  assert.ok(atEnd.ok && atEnd.value === "B" && atEnd.duplicate, "clamped onto B, which exists");
+
+  // Points lying on the curve count as used points of it.
+  assert.ok(e.pointsOnCurve(g).includes(P) && e.pointsOnCurve(k).includes(Q) && e.pointsOnCurve(s).includes(R));
+
+  // Moving B carries the points along (similarity): B to (1, 2) rotates and scales AB.
+  e.movePoint("B", { x: -1, y: 2 });         // AB now points straight up, |AB| = 2
+  near(e.pos(P), -1, 4);                      // t = 2 along A -> B
+  near(e.pos(Q), -3, 0);                      // 90° counter-clockwise from "up"
+  near(e.pos(R), -1, 1.5);                    // 3/4 of the segment
+
+  // Dragging a point on a curve slides it along the curve; draggable, unlike intersections.
+  assert.ok(e.isDraggable(P) && e.isDraggable(Q));
+  e.beginMove();
+  e.movePoint(Q, { x: 5, y: 0 });             // nearest point of the circle (center A, r 2) towards +x
+  e.endMove();
+  near(e.pos(Q), 1, 0);
+  e.movePoint(R, { x: 7, y: 100 });           // clamped to the end B
+  near(e.pos(R), -1, 2);
+  e.undo();
+  near(e.pos(R), -1, 1.5);
+  e.undo();
+  near(e.pos(Q), -3, 0);
+
+  // Errors.
+  assert.equal((e.addPointOnCurve("A", { x: 0, y: 0 }) as { error: string }).error, "not-a-curve");
+  assert.equal((e.addPointOnCurve("nope", { x: 0, y: 0 }) as { error: string }).error, "unknown-id");
+
+  // Save/load reproduces everything; deleting the curve deletes its points.
+  const f = val(Engine.fromJSON(JSON.stringify(e.toJSON())));
+  assert.deepEqual([...f.derived], [...e.derived]);
+  const bad = e.toJSON() as any;
+  bad.objects.find((o: any) => o.id === P).def.t = "2";
+  assert.ok(!Engine.fromJSON(bad).ok);
+  const bad2 = e.toJSON() as any;
+  bad2.objects.find((o: any) => o.id === P).def.curve = "A";
+  assert.ok(!Engine.fromJSON(bad2).ok);
+  assert.deepEqual(val(e.remove(k)), [k, Q]);
+});
+
+test("a point on a circle survives the circle degenerating and returns", () => {
+  const e = new Engine();
+  const k = val(e.addCircleThrough("A", "B"));
+  const Q = val(e.addPointOnCurve(k, { x: -1, y: 5 }));
+  e.beginMove();
+  e.movePoint("B", { x: -1, y: 0 });
+  assert.equal(e.derived.get(Q)!.valid, false);
+  e.movePoint("B", { x: 1, y: 0 });
+  e.endMove();
+  assert.ok(e.derived.get(Q)!.valid);
+  assert.ok(Math.abs(e.pos(Q)!.x + 1) < 1e-9 && Math.abs(e.pos(Q)!.y - 2) < 1e-9);
 });

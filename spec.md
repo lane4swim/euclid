@@ -10,17 +10,17 @@ The site is one static page (HTML, CSS, TypeScript compiled to one JS file or in
 
 | Topic | Decision |
 | --- | --- |
-| Starting objects | Exactly two given points, A and B. Every later point is an intersection of two existing curves. |
+| Starting objects | Two given points, A and B. Later points are intersections of two existing curves, or arbitrary points placed by the user: free in the plane, or attached to a line, circle or segment. |
 | Curves | Infinite lines through two points; circles (two creation tools, see below); segments (see below). Nothing else may be intersected. |
 | Compass model | Rigid compass: a circle may take its radius from the distance of two other points. |
 | Circle tools | Both: (1) center + point on the circle; (2) center + two points whose distance is the radius. |
-| Dynamics | A and B are draggable. All dependent objects recompute live. |
+| Dynamics | A, B and arbitrary points are draggable. All dependent objects recompute live. |
 | Line display | Lines are mathematically infinite but drawn trimmed to the span of their used points plus a margin. A global toggle shows them infinite. |
 | Circle display | A new circle is shown in full. Each circle has a toggle: full circle or arc-only. In arc mode the arc extent is automatic (shortest arc covering all used intersection points on it, plus a margin). |
 | Segments | Segments between two points. They can be intersected with lines, circles and other segments, but only points on the segment itself count (see Geometry kernel). |
-| Output | Numbered step list beside the drawing; JSON save/load; SVG and PNG export. |
+| Output | Numbered step list beside the drawing; JSON save/load; SVG and PNG export; step list export as Markdown or HTML with the drawing. |
 | Language | German user interface, English as a second language. |
-| Out of scope (v1) | Measuring tools, angles, free points on curves, macros, multi-user editing, server storage. |
+| Out of scope (v1) | Measuring tools, angles, macros, multi-user editing, server storage. |
 | Delivery | Static site in several files (index.html, CSS, JS modules); no server, no runtime dependencies. |
 
 ## Data model
@@ -33,7 +33,11 @@ interface Vec { x: number; y: number }    // world coordinates, y up
 
 // Points
 type PointDef =
-  | { kind: "given"; pos: Vec }           // only A and B; the only draggable objects
+  | { kind: "given"; pos: Vec }           // only A and B; draggable
+  | { kind: "free"; pos: Vec }            // arbitrary point placed by the user; draggable
+  | { kind: "onCurve"; curve: ID; t: number } // arbitrary point on a line/circle/segment; draggable along it
+      // lines, segments: t = fraction from p1 to p2 (segments clamp to [0, 1]);
+      // circles: t = angle (rad, CCW) from center→through, or r1→r2 for a rigid circle
   | { kind: "intersection";
       a: ID; b: ID;                        // two curves (lines or circles), a before b in list
       pick: 0 | 1 };                       // which of the up-to-two intersections, see kernel
@@ -143,7 +147,10 @@ class Engine {
   steps(): StepView[];                                    // number, objectId, text, valid
 
   // Editing
-  moveGiven(id: "A" | "B", pos: Vec): void;               // live; recompute, no new step
+  addFreePoint(pos: Vec): Result<ID>;                     // arbitrary point; an existing point there is reused (duplicate)
+  addPointOnCurve(curve: ID, pos: Vec): Result<ID>;       // arbitrary point on a curve, nearest to pos; same reuse rule
+  movePoint(id: ID, pos: Vec): void;                      // A, B, free points; points on curves slide along their curve
+  moveGiven(id: "A" | "B", pos: Vec): void;               // same as movePoint for A and B
   rename(id: ID, label: string): Result<void>;
   setVisible(id: ID, visible: boolean): void;
   setColor(id: ID, color: string): void;
@@ -215,14 +222,15 @@ interface UIState {
 
 | Tool | Clicks | Engine call |
 | --- | --- | --- |
-| Move | Drag A or B; click anything else to select it | `moveGiven` |
+| Move | Drag A, B or an arbitrary point; click anything else to select it | `movePoint` |
 | Line | Point 1, point 2 | `addLine` |
 | Circle | Center, point on the circle | `addCircleThrough` |
 | Rigid circle | Center, radius point 1, radius point 2 | `addCircleRadius` |
 | Segment | Point 1, point 2 | `addSegment` |
 | Intersect | Curve 1, curve 2; then candidate 1 or 2 if there are two | `addIntersection` |
+| Point | Click empty space, or a line, circle or segment to attach the point to it (an unmarked intersection is marked instead) | `addFreePoint`, `addPointOnCurve` |
 
-Only points, including snapped intersections of two curves that are not yet marked, can be picked by the line, circle and segment tools; only lines, circles and segments by the intersect tool. Where a segment lies on a line, the line is picked. A click on something not allowed for the current pick is ignored and shows a short hint. After an intersection is created, the new point shows an inline name field with the automatic label preselected: Enter accepts, typing renames.
+Only points, including snapped intersections of two curves that are not yet marked, can be picked by the line, circle and segment tools, and a click on empty space or on a curve in these tools creates an arbitrary point there (attached to the curve in the second case), as its own step just before the new curve; only lines, circles and segments by the intersect tool. Where a segment lies on a line, the line is picked. A click on something not allowed for the current pick is ignored and shows a short hint. After an intersection is created, the new point shows an inline name field with the automatic label preselected: Enter accepts, typing renames.
 
 **Step list.** One row per object, numbered from 1 (A and B are shown as "Given" above the list). Each row shows the generated sentence, with labels in bold. Examples (English / German):
 
@@ -232,7 +240,7 @@ Only points, including snapped intersections of two curves that are not yet mark
 
 Row actions: eye (show or hide), rename, color, line width (lines, circles and segments), arc/full toggle (circles only), delete (asks first when other steps depend on it). Hovering a row highlights the object on the drawing; clicking selects it. The last row is the "current" step; undo removes it.
 
-**Keyboard.** `1`–`6` choose tools, `Esc` cancel, `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` undo and redo, `Delete` remove the selected object, `F` fit view to the construction.
+**Keyboard.** `1`–`7` choose tools, `Esc` cancel, `Ctrl/Cmd+Z` and `Ctrl/Cmd+Shift+Z` undo and redo, `Delete` remove the selected object, `F` fit view to the construction.
 
 **Errors and hints.** Every `ErrorCode` has a message in both languages shown near the drawing for a few seconds, for example "The circles do not intersect" with the offending objects highlighted.
 
@@ -259,6 +267,7 @@ On load the engine validates before accepting anything: correct `format` and a k
 
 - **SVG:** the visible active objects drawn by the same draw function, fitted to their bounds with 5% padding, with inline styles and labels as text so the file opens correctly anywhere.
 - **PNG:** that SVG rasterized on a canvas at 2× scale, with a choice of white or transparent background.
+- **Step list (Markdown or HTML):** the title, the drawing (the SVG above, light palette, no background), "Given: points A and B" and the numbered steps in the current language, with labels in bold and invalid steps marked with their reason. Markdown embeds the SVG as a base64 `data:` image so the file stands alone. HTML is a standalone page with the SVG inline and a small inline stylesheet (light and dark), with no scripts.
 - Hidden, invalid and redo-stack objects are not exported.
 
 **Localization.** All user text comes from one table keyed by message id, with `de` and `en` entries; no text is built from concatenated fragments, because word order differs. Step sentences are templates per language with named slots (`{center}`, `{through}`, `{a}`, `{b}`, `{label}`, `{side}`). The first language is German if `navigator.language` starts with `de`, else English; the choice is remembered in `localStorage` (wrapped in try/catch, so the site works without it). Labels already stored in the construction do not change when the language changes.
@@ -300,3 +309,7 @@ The spec above assumes the default shown for each question. All questions are no
 **Follow-up to question 2.** Decided: a snapped intersection becomes a regular labelled point with its own numbered step, created just before the new line, circle or segment. If two curves have two intersections, the snap shows both as numbered candidates and you click one.
 
 **Follow-up: intersecting segments.** Decided (Nov 1, 2026): segments are no longer display-only. They can be intersected with lines, circles and other segments, counting only points on the segment itself.
+
+**Follow-up: arbitrary points.** Decided (Nov 1, 2026): the user can place arbitrary (free) points anywhere in the plane, with the Point tool or by clicking empty space in the line, circle and segment tools. They are numbered steps ("Arbitrary point C"), draggable like A and B, and saved with their position. Points bound to a curve were added in a second step (see below).
+
+**Follow-up: points on curves.** Decided (Nov 1, 2026): an arbitrary point can be attached to a line, circle or segment ("Arbitrary point C on g1"). It is stored by curve and parameter, so it stays on its curve when the construction moves, and dragging it slides it along the curve. A point attached to a curve counts as a used point of that curve. Deleting the curve deletes the point.

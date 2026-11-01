@@ -5,17 +5,19 @@ import { format, formatParts, messages, type Lang, type MessageId } from "../i18
 import { dist, type Vec } from "../kernel.js";
 import { DEFAULT_WIDTH, deps, hasWidth, type ErrorCode, type GeoObject, type ID, type Result } from "../model.js";
 import { arcExtent } from "../render-geom.js";
+import { buildReport, type ReportFormat } from "../report.js";
 import { colorOf, drawSVG, drawnLine, exportSVG, fitView, toScreen, toWorld, type Ghost, type Palette, type View } from "./draw.js";
 
 // ------------------------------------------------------------------ setup
 
-type Tool = "move" | "line" | "circle" | "circleRigid" | "segment" | "intersect";
-const TOOLS: Tool[] = ["move", "line", "circle", "circleRigid", "segment", "intersect"];
+type Tool = "move" | "line" | "circle" | "circleRigid" | "segment" | "intersect" | "point";
+const TOOLS: Tool[] = ["move", "line", "circle", "circleRigid", "segment", "intersect", "point"]; // keys 1–7
 const POINT_TOOLS = new Set<Tool>(["line", "circle", "circleRigid", "segment"]);
 type Theme = "auto" | "light" | "dark";
 
 interface Snap { a: ID; b: ID; pick: 0 | 1; pos: Vec }
-type Pick = { id: ID } | { snap: Snap };
+/** A chosen point: an existing one, an unmarked intersection, a new free point, or a new point on a curve. */
+type Pick = { id: ID } | { snap: Snap } | { free: Vec } | { onCurve: ID; pos: Vec };
 type Hit =
   | { kind: "point" | "curve" | "segment"; id: ID }
   | { kind: "snap"; snap: Snap }
@@ -110,14 +112,25 @@ function scheduleSteps(): void {
 }
 
 function pickPos(p: Pick): Vec | undefined {
-  return "id" in p ? engine.pos(p.id) : p.snap.pos;
+  if ("id" in p) return engine.pos(p.id);
+  if ("snap" in p) return p.snap.pos;
+  if ("onCurve" in p) return engine.projectOnCurve(p.onCurve, p.pos) ?? undefined;
+  return p.free;
 }
 
 function hitPos(h: Hit | null): Vec | undefined {
   if (!h) return undefined;
   if (h.kind === "snap") return h.snap.pos;
   if (h.kind === "candidate") return h.pos;
-  return h.kind === "point" ? engine.pos(h.id) : undefined;
+  if (h.kind === "point") return engine.pos(h.id);
+  // A curve under the cursor in a point-taking tool: where a new point on it would go.
+  if (takesPoints() && ui.pointer) return engine.projectOnCurve(h.id, ui.pointer) ?? undefined;
+  return undefined;
+}
+
+/** Tools whose clicks produce points (and so may create points on curves or in empty space). */
+function takesPoints(): boolean {
+  return ui.tool === "point" || POINT_TOOLS.has(ui.tool);
 }
 
 function ghost(): Ghost | null {
@@ -153,7 +166,8 @@ function draw(): void {
   svg.innerHTML = drawSVG(engine, {
     view: ui.view, width: w, height: h, palette: palette(), infiniteLines: ui.settings.showInfiniteLines,
     interactive: true, hover, highlight: hl, current: last, ghost: ghost(),
-    snap: ui.hover?.kind === "snap" ? ui.hover.snap.pos : null,
+    snap: ui.hover?.kind === "snap" ? ui.hover.snap.pos
+      : ui.hover && (ui.hover.kind === "curve" || ui.hover.kind === "segment") && takesPoints() ? hitPos(ui.hover) ?? null : null,
     candidates: ui.candidates.map((c) => ({ pos: c.pos, n: c.pick + 1, hover: ui.hover?.kind === "candidate" && ui.hover.pick === c.pick })),
   });
   updateCursor();
@@ -163,7 +177,7 @@ function updateCursor(): void {
   const h = ui.hover;
   if (gesture?.kind === "drag") svg.style.cursor = "grabbing";
   else if (gesture?.kind === "pan" && gesture.moved) svg.style.cursor = "move";
-  else if (h && ui.tool === "move" && h.kind === "point" && (h.id === "A" || h.id === "B")) svg.style.cursor = "grab";
+  else if (h && ui.tool === "move" && h.kind === "point" && engine.isDraggable(h.id)) svg.style.cursor = "grab";
   else if (h) svg.style.cursor = "pointer";
   else svg.style.cursor = ui.tool === "move" ? "default" : "crosshair";
 }
@@ -270,7 +284,7 @@ function hitTest(q: Vec, touch: boolean): Hit | null {
 
 function allowed(h: Hit): boolean {
   if (ui.tool === "move") return h.kind === "point" || h.kind === "curve" || h.kind === "segment";
-  if (POINT_TOOLS.has(ui.tool)) return h.kind === "point" || h.kind === "snap";
+  if (takesPoints()) return h.kind !== "candidate"; // points, intersections, and curves (a new point on them)
   return h.kind === "curve" || h.kind === "segment" || h.kind === "snap" || h.kind === "candidate";
 }
 
@@ -320,9 +334,19 @@ function select(id: ID | null): void {
   scheduleDraw();
 }
 
-function handlePick(h: Hit): void {
+/** `at` is the click position in world coordinates. */
+function handlePick(h: Hit, at: Vec): void {
+  if (ui.tool === "point") {
+    // Existing point: select it. Unmarked intersection: mark it. Curve: a new point on it.
+    if (h.kind === "snap") createIntersection(h.snap.a, h.snap.b, h.snap.pick);
+    else if (h.kind === "point") { select(h.id); toast(t("ui.existingPoint", { label: label(h.id) }), "info", [h.id]); }
+    else if (h.kind === "curve" || h.kind === "segment") announcePoint(engine.addPointOnCurve(h.id, at));
+    return;
+  }
   if (POINT_TOOLS.has(ui.tool)) {
-    ui.picked.push(h.kind === "snap" ? { snap: h.snap } : { id: (h as { id: ID }).id });
+    ui.picked.push(h.kind === "snap" ? { snap: h.snap }
+      : h.kind === "curve" || h.kind === "segment" ? { onCurve: h.id, pos: at }
+      : { id: (h as { id: ID }).id });
     const need = ui.tool === "circleRigid" ? 3 : 2;
     if (ui.picked.length >= need) completePointTool();
     updateStatus();
@@ -347,7 +371,7 @@ function handlePick(h: Hit): void {
   scheduleDraw();
 }
 
-/** Resolve snapped intersections into points (each its own step), then run the tool. */
+/** Resolve snapped intersections and new free points into points (each its own step), then run the tool. */
 function completePointTool(): void {
   const created: ID[] = [];
   const ids: ID[] = [];
@@ -356,7 +380,9 @@ function completePointTool(): void {
   ui.picked = []; // engine events fire below; the pick sequence is finished
   for (const p of picks) {
     if ("id" in p) { ids.push(p.id); continue; }
-    const r = engine.addIntersection(p.snap.a, p.snap.b, p.snap.pick);
+    const r = "snap" in p ? engine.addIntersection(p.snap.a, p.snap.b, p.snap.pick)
+      : "onCurve" in p ? engine.addPointOnCurve(p.onCurve, p.pos)
+      : engine.addFreePoint(p.free);
     if (!r.ok) { rollback(); showError(r); cancelPick(); return; }
     if (!r.duplicate) created.push(r.value);
     ids.push(r.value);
@@ -369,6 +395,23 @@ function completePointTool(): void {
     default: r = engine.addCircleRadius(ids[0], ids[1], ids[2]); break;
   }
   if (!r.ok) { rollback(); showError(r); }
+}
+
+/** After the point tool made (or reused) a point: name field for a new one, selection for an existing one. */
+function announcePoint(r: Result<ID>): void {
+  if (!r.ok) showError(r);
+  else if (r.duplicate) { select(r.value); toast(t("ui.existingPoint", { label: label(r.value) }), "info", [r.value]); }
+  else { const id = r.value; requestAnimationFrame(() => openNameField(id)); }
+}
+
+/** Empty space was clicked: the point tool places a free point; the other point tools use one as their next pick. */
+function placeFree(pos: Vec): void {
+  if (ui.tool === "point") { announcePoint(engine.addFreePoint(pos)); return; }
+  if (!POINT_TOOLS.has(ui.tool)) return;
+  ui.picked.push({ free: pos });
+  if (ui.picked.length >= (ui.tool === "circleRigid" ? 3 : 2)) completePointTool();
+  updateStatus();
+  scheduleDraw();
 }
 
 function createIntersection(a: ID, b: ID, pick: 0 | 1): void {
@@ -419,8 +462,8 @@ nameField.addEventListener("blur", () => { if (nameTarget) closeNameField(true);
 // ------------------------------------------------------------ pointer input
 
 type Gesture =
-  | { kind: "drag"; id: "A" | "B"; offset: Vec; moved: boolean }
-  | { kind: "pan"; start: Vec; origin: Vec; moved: boolean; hit: Hit | null }
+  | { kind: "drag"; id: ID; offset: Vec; moved: boolean }
+  | { kind: "pan"; start: Vec; origin: Vec; moved: boolean; hit: Hit | null; place: boolean }
   | { kind: "pinch"; d0: number; world0: Vec; scale0: number };
 let gesture: Gesture | null = null;
 const pointers = new Map<number, Vec>();
@@ -457,7 +500,7 @@ svg.addEventListener("pointerdown", (ev) => {
   if (pointers.size > 2) return;
   const hit = hitTest(q, ev.pointerType !== "mouse");
   if (ui.tool === "move") {
-    if (hit?.kind === "point" && (hit.id === "A" || hit.id === "B")) {
+    if (hit?.kind === "point" && engine.isDraggable(hit.id)) {
       const { w, h } = size();
       const wq = toWorld(ui.view, w, h, q), p = engine.pos(hit.id)!;
       engine.beginMove();
@@ -466,10 +509,12 @@ svg.addEventListener("pointerdown", (ev) => {
       return;
     }
   } else if (hit) {
-    if (allowed(hit)) { handlePick(hit); gesture = null; return; }
-    toast(t(POINT_TOOLS.has(ui.tool) ? "hint.needPoint" : "hint.needCurve"), "info");
+    if (allowed(hit)) { const { w, h } = size(); handlePick(hit, toWorld(ui.view, w, h, q)); gesture = null; return; }
+    toast(t(takesPoints() ? "hint.needPoint" : "hint.needCurve"), "info");
   }
-  gesture = { kind: "pan", start: q, origin: { ...ui.view.origin }, moved: false, hit };
+  // Empty space: drag pans; a click without movement places a free point (point-taking tools only).
+  const place = !hit && takesPoints();
+  gesture = { kind: "pan", start: q, origin: { ...ui.view.origin }, moved: false, hit, place };
 });
 
 svg.addEventListener("pointermove", (ev) => {
@@ -488,7 +533,7 @@ svg.addEventListener("pointermove", (ev) => {
   }
   if (gesture?.kind === "drag") {
     gesture.moved = true;
-    engine.moveGiven(gesture.id, { x: ui.pointer.x - gesture.offset.x, y: ui.pointer.y - gesture.offset.y });
+    engine.movePoint(gesture.id, { x: ui.pointer.x - gesture.offset.x, y: ui.pointer.y - gesture.offset.y });
     return;
   }
   if (gesture?.kind === "pan") {
@@ -518,6 +563,9 @@ function endPointer(ev: PointerEvent): void {
   } else if (g?.kind === "pan" && !g.moved && ui.tool === "move") {
     const h = g.hit;
     select(h && (h.kind === "point" || h.kind === "curve" || h.kind === "segment") ? h.id : null);
+  } else if (g?.kind === "pan" && !g.moved && g.place) {
+    const { w, h } = size();
+    placeFree(toWorld(ui.view, w, h, g.start));
   }
   updateCursor();
 }
@@ -800,6 +848,14 @@ function exportPng(background: string | null): void {
   img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(s);
 }
 
+/** Step list plus drawing, as a self-contained Markdown or HTML file in the current language. */
+function exportReport(fmt: ReportFormat): void {
+  const svg = exportSVG(engine, LIGHT, ui.settings.showInfiniteLines, null);
+  const text = buildReport(engine, fmt, { lang: ui.settings.lang, svg });
+  const type = fmt === "md" ? "text/markdown;charset=utf-8" : "text/html;charset=utf-8";
+  download(`${t("ui.fileName")}.${fmt}`, new Blob([text], { type }));
+}
+
 // ------------------------------------------------------------ toolbar & keys
 
 function applyLanguage(): void {
@@ -848,6 +904,8 @@ const actions: Record<string, () => void> = {
   "export-svg": exportSvgFile,
   "export-png-white": () => exportPng("#ffffff"),
   "export-png-transparent": () => exportPng(null),
+  "export-md": () => exportReport("md"),
+  "export-html": () => exportReport("html"),
 };
 document.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((b) => {
   b.addEventListener("click", () => {
@@ -876,7 +934,7 @@ document.addEventListener("keydown", (ev) => {
   if (mod && key === "z") { ev.preventDefault(); if (ev.shiftKey) engine.redo(); else engine.undo(); return; }
   if (mod && key === "y") { ev.preventDefault(); engine.redo(); return; }
   if (mod || ev.altKey) return;
-  if (/^[1-6]$/.test(ev.key)) { setTool(TOOLS[Number(ev.key) - 1]); return; }
+  if (/^[1-7]$/.test(ev.key)) { setTool(TOOLS[Number(ev.key) - 1]); return; }
   if (ev.key === "Escape") { cancelPick(); select(null); exportMenu.open = false; return; }
   if ((ev.key === "Delete" || ev.key === "Backspace") && ui.selected) { ev.preventDefault(); removeObject(ui.selected); return; }
   if (key === "f") { fit(); }

@@ -6,7 +6,13 @@ export type { Vec };
 export type ID = string;
 
 export type PointDef =
-  | { kind: "given"; pos: Vec }
+  | { kind: "given"; pos: Vec }            // only A and B
+  | { kind: "free"; pos: Vec }             // arbitrary point placed by the user; draggable
+  // Arbitrary point bound to a line, circle or segment; draggable along it.
+  // Lines/segments: t is the fraction from p1 to p2 (clamped to [0, 1] on segments).
+  // Circles: t is the angle in radians from the circle's reference direction
+  // (center -> through point, or r1 -> r2 for a rigid circle), counter-clockwise.
+  | { kind: "onCurve"; curve: ID; t: number }
   | { kind: "intersection"; a: ID; b: ID; pick: 0 | 1 };
 
 export interface LineDef { p1: ID; p2: ID }
@@ -81,7 +87,8 @@ export const isValidWidth = (w: unknown): w is number => typeof w === "number" &
 export function deps(obj: GeoObject): ID[] {
   switch (obj.type) {
     case "point":
-      return obj.def.kind === "given" ? [] : [obj.def.a, obj.def.b];
+      if (obj.def.kind === "intersection") return [obj.def.a, obj.def.b];
+      return obj.def.kind === "onCurve" ? [obj.def.curve] : [];
     case "line":
     case "segment":
       return [obj.def.p1, obj.def.p2];
