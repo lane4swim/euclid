@@ -34,6 +34,8 @@ export interface DrawOptions {
   fadeAfter?: number | null;
   /** Final-figure view: objects not marked as final are drawn faded. */
   fadeNonFinal?: boolean;
+  /** Step-through: objects after this index in the object list are not drawn at all. */
+  hideAfter?: number | null;
 }
 
 /** Opacity of objects from steps after the selected one. */
@@ -94,6 +96,7 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
     const obj = active[index];
     const d = e.derived.get(obj.id);
     if (!d?.valid || !obj.view.visible) continue;
+    if (o.hideAfter != null && index > o.hideAfter) break; // later steps are not drawn in step-through
     // Everything this object adds to the layers below is faded if it belongs to a later step.
     const faded = (o.fadeAfter != null && index > o.fadeAfter) || (!!o.fadeNonFinal && !obj.view.final);
     const before = faded ? layers.map((l) => l.length) : null;

@@ -9,6 +9,7 @@ The geometry kernel, engine and browser UI are implemented. The UI includes:
 - seven tools (keys 1–7), including a Point tool for arbitrary points, with hover, snapping to unmarked intersections, dashed ghost previews, and numbered candidates for choosing between two intersections;
 - dragging A, B and arbitrary points with live updates, pan by dragging empty space, zoom with the wheel or a pinch;
 - the step list with show/hide, rename, color, line width, arc/full toggle, a final-figure flag (and a "Final figure" row that shows the marked result), and delete (with confirmation when other steps depend on the object);
+- step-through mode that shows the construction up to each step with the step's sentence;
 - undo/redo, JSON save/open, SVG and PNG export (white or transparent background), step-list export as Markdown or HTML with the drawing, and autosave in the browser;
 - German and English, and light, dark and automatic themes.
 
@@ -63,5 +64,6 @@ These are choices the spec leaves open. Each one is easy to change.
 - **Drags** discard the redo region, like any other new change. Moves to the current position are ignored.
 - **Selected step.** Steps after the selected one are shown lighter: in the list with a dedicated text color (`--text-later`, at least 4.5:1 contrast on every row background in both themes), and on the drawing at 28% opacity. Exports never fade anything.
 - **Final figure.** `view.final` marks objects as part of the result; it is only stored when true. The "Final figure" row after the last step uses the same lighter style as later steps for everything not marked. A and B have no row of their own, so they are marked by selecting them and pressing `M`.
+- **Step through** is a view state in the UI only (`ui.stepThrough`, the step number); the draw function's `hideAfter` option leaves out later objects. It starts at the selected step if there is one. Undo while stepping keeps the position, clamped to the remaining steps.
 - **Snapped points in the line, circle and segment tools** become their own steps just before the new curve. If the curve is refused (for example as a duplicate), those points are undone again.
 - **Performance.** With 111 objects, a recompute takes about 0.3 ms under Node, well inside a 60 fps frame.

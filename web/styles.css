@@ -196,6 +196,32 @@ main {
   pointer-events: none;
 }
 
+/* Step-through bar at the bottom of the drawing. */
+.stepper {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.stepper[hidden] { display: none; }
+.stepper .icon { min-height: 36px; padding: 4px 8px; }
+.stepper-text { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 6px; }
+.stepper-count { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.stepper-desc { font-size: 15px; }
+.stepper-desc b { font-style: italic; font-weight: 650; }
+.stepper-desc .reason { color: var(--invalid); font-style: italic; font-size: 13px; }
+#btn-step-through[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+
 .toast {
   position: absolute;
   top: 12px;
