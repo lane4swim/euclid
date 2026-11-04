@@ -7,7 +7,6 @@ import {
   sameCircle, sameLine, samePoint, type Circle, type Line, type Vec,
 } from "./kernel.js";
 import { formatParts, joinParts, partsToString, type Lang, type TextPart } from "./i18n.js";
-import { buildPreset, DEFAULT_PRESET, type PresetId } from "./presets.js";
 import {
   deps, hasWidth, isCurve, isValidWidth, type CircleDef, type CurveObject, type Derived, type ErrorCode, type GeoObject,
   type ID, type InvalidReason, type LineObject, type ObjectType, type SegmentObject, type PointObject, type Result,
@@ -47,7 +46,6 @@ export const DEFAULT_COLORS: Record<ObjectType, string> = {
 
 export const DEFAULT_A: Vec = { x: -1, y: 0 };
 export const DEFAULT_B: Vec = { x: 1, y: 0 };
-export { PRESET_IDS, DEFAULT_PRESET, type PresetId } from "./presets.js";
 
 const MAX_FILE_BYTES = 1024 * 1024;
 const LABEL_RE = /^[\p{L}\p{N}_'′″]{1,24}$/u;
@@ -95,11 +93,11 @@ export class Engine {
     this.recompute();
   }
 
-  /** A new construction starting from a start configuration. */
-  static fromPreset(id: PresetId, lang: Lang = "de"): Engine {
+  /** A new construction from a start configuration (given objects, e.g. a parsed preset). */
+  static fromStart(start: GeoObject[], lang: Lang = "de"): Engine {
     const e = new Engine();
     e.labelLang = lang;
-    e.objects = buildPreset(id, lang);
+    e.objects = structuredClone(start);
     e.cursor = e.given = e.objects.length;
     e.recompute();
     return e;
@@ -489,11 +487,14 @@ export class Engine {
     this.emit({ kind: "redo" });
   }
 
-  /** Start a new construction from a start configuration (default: points A and B). Undoable. */
-  reset(preset: PresetId = DEFAULT_PRESET): void {
+  /**
+   * Start a new construction from a start configuration: the given objects (validated, e.g.
+   * a parsed preset); default: points A and B at their default positions. Undoable.
+   */
+  reset(start?: GeoObject[]): void {
     this.endMove();
     this.mutate("reset", undefined, () => {
-      this.objects = buildPreset(preset, this.labelLang);
+      this.objects = start ? structuredClone(start) : [givenPoint("A", DEFAULT_A), givenPoint("B", DEFAULT_B)];
       this.cursor = this.given = this.objects.length;
     });
   }

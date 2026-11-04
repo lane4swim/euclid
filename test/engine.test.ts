@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { parsePresets } from "../src/presets.js";
 import assert from "node:assert/strict";
 import { Engine } from "../src/engine.js";
 import { coveringArc } from "../src/kernel.js";
@@ -17,6 +19,15 @@ function vesica() {
   const D = val(e.addIntersection(k1, k2, 1));
   return { e, k1, k2, C, D };
 }
+
+// Start configurations come from the site's presets file.
+const PRESET_FILE: unknown = JSON.parse(readFileSync(new URL("../../web/presets.json", import.meta.url), "utf8"));
+function preset(id: string, lang: "de" | "en" = "de") {
+  const p = parsePresets(PRESET_FILE, lang).presets.find((x) => x.id === id);
+  assert.ok(p, `preset ${id} missing`);
+  return p;
+}
+const fromPreset = (id: string, lang: "de" | "en" = "de") => Engine.fromStart(preset(id, lang).objects, lang);
 
 test("creation errors", () => {
   const e = new Engine();
@@ -474,7 +485,8 @@ test("final flag: set on any object, undo/redo, save/load, validation", () => {
 });
 
 test("start configurations: given text, labels and steps after the given objects", async () => {
-  const { PRESET_IDS } = await import("../src/presets.js");
+  const PRESET_IDS = parsePresets(PRESET_FILE, "de").presets.map((x) => x.id);
+  assert.deepEqual(PRESET_IDS, ["twoPoints", "threePoints", "lineAndPoint", "twoLines", "circleAndPoint", "circleNoCenter"]);
   const expected: Record<string, [string, string]> = {
     twoPoints: ["Gegeben: Punkte A und B", "Given: points A and B"],
     threePoints: ["Gegeben: Punkte A, B und C", "Given: points A, B, and C"],
@@ -485,7 +497,7 @@ test("start configurations: given text, labels and steps after the given objects
   };
   for (const id of PRESET_IDS) {
     for (const [i, lang] of (["de", "en"] as const).entries()) {
-      const e = Engine.fromPreset(id, lang);
+      const e = fromPreset(id, lang);
       assert.equal(e.givenText(lang), expected[id][i], `${id} ${lang}`);
       assert.equal(e.steps(lang).length, 0);
       assert.ok(e.active.every((o) => e.derived.get(o.id)!.valid), `${id}: all given objects valid`);
@@ -495,7 +507,7 @@ test("start configurations: given text, labels and steps after the given objects
 });
 
 test("two given lines: intersect them, steps start at 1, given objects are protected", () => {
-  const e = Engine.fromPreset("twoLines", "de");
+  const e = fromPreset("twoLines", "de");
   const [g, h] = ["L1", "L2"];
   const S = val(e.addIntersection(g, h, 0));
   assert.equal(e.get(S)!.label, "A", "first free capital letter");
@@ -509,7 +521,7 @@ test("two given lines: intersect them, steps start at 1, given objects are prote
 });
 
 test("circle without center: the hidden center is never an existing point", () => {
-  const e = Engine.fromPreset("circleNoCenter", "en");
+  const e = fromPreset("circleNoCenter", "en");
   // A point placed exactly at the hidden center is a new, visible point.
   const Z = e.addFreePoint({ x: 0, y: 0 });
   assert.ok(Z.ok && !Z.duplicate && e.get(Z.value)!.label === "A");
@@ -521,7 +533,7 @@ test("circle without center: the hidden center is never an existing point", () =
 });
 
 test("dragging a given line translates it; dependents follow; one undo step", () => {
-  const e = Engine.fromPreset("lineAndPoint", "de");
+  const e = fromPreset("lineAndPoint", "de");
   const before = e.derived.get("L1")!.line!;
   const anchors = e.givenAnchors("L1");
   assert.deepEqual(anchors, ["H1", "H2"]);
@@ -541,7 +553,7 @@ test("dragging a given line translates it; dependents follow; one undo step", ()
 test("reset to a start configuration is undoable; files keep the configuration", () => {
   const e = new Engine();
   val(e.addCircleThrough("A", "B"));
-  e.reset("circleAndPoint");
+  e.reset(preset("circleAndPoint").objects);
   assert.equal(e.given, 5);
   assert.equal(e.cursor, 5);
   assert.ok(e.get("M") && !e.get("A"));
@@ -564,7 +576,7 @@ test("reset to a start configuration is undoable; files keep the configuration",
   delete v1.given;
   assert.equal(val(Engine.fromJSON(v1)).given, 2);
   // Steps must not refer to hidden handles.
-  const bad = Engine.fromPreset("circleNoCenter").toJSON() as any;
+  const bad = fromPreset("circleNoCenter").toJSON() as any;
   bad.objects.push({ id: "L9", type: "line", label: "g9", def: { p1: "H1", p2: "H2" }, view: { visible: true, color: "#000" } });
   bad.cursor = bad.objects.length;
   const r = Engine.fromJSON(bad);

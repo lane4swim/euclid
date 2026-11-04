@@ -1,6 +1,7 @@
 // Browser UI: wires the engine to the SVG drawing, toolbar and step list.
 
-import { Engine, PRESET_IDS, type PresetId } from "../engine.js";
+import { Engine } from "../engine.js";
+import { parsePresets, type Preset } from "../presets.js";
 import { format, formatParts, messages, type Lang, type MessageId } from "../i18n.js";
 import { dist, type Vec } from "../kernel.js";
 import { DEFAULT_WIDTH, deps, hasWidth, type ErrorCode, type GeoObject, type ID, type Result } from "../model.js";
@@ -1061,13 +1062,52 @@ document.querySelectorAll<HTMLDetailsElement>("details.menu").forEach((m) => {
   m.addEventListener("toggle", () => { if (m.open) closeMenus(m); });
 });
 
+// ---------------------------------------------------------- start configurations
+
+/** Raw contents of presets.json (parsed per language when the menu is built), or null. */
+let presetData: unknown = null;
+/** The start configurations offered in the New menu, in the current language. */
+let presets: Preset[] = [];
+const newMenuItems = $<HTMLElement>("new-menu-items");
+
+/**
+ * Load the start configurations from presets.json next to the page. Without it (offline,
+ * opened from disk, broken file) the New menu offers only the built-in points A and B.
+ */
+async function loadPresets(): Promise<void> {
+  try {
+    const res = await fetch("presets.json", { cache: "no-cache" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    presetData = await res.json();
+    for (const err of parsePresets(presetData, ui.settings.lang).errors) console.warn("presets.json:", err);
+  } catch (err) {
+    console.warn("Start configurations could not be loaded; only the default is offered.", err);
+    presetData = null;
+  }
+  renderNewMenu();
+}
+
+/** Fill the New menu with the start configurations in the current language. */
+function renderNewMenu(): void {
+  presets = presetData ? parsePresets(presetData, ui.settings.lang).presets : [];
+  const items = presets.length ? presets.map((p) => ({ id: p.id, name: p.name })) : [{ id: "", name: t("preset.default") }];
+  newMenuItems.replaceChildren(...items.map(({ id, name }) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = name;
+    b.dataset.preset = id;
+    b.addEventListener("click", () => { closeMenus(); newConstruction(id); });
+    return b;
+  }));
+}
+
 /** Start a new construction from a start configuration (undoable). */
-function newConstruction(preset: PresetId): void {
+function newConstruction(presetId: string): void {
   if (ui.stepThrough !== null) stopStepThrough();
   if (nameTarget) closeNameField(false);
   cancelPick();
   select(null);
-  engine.reset(preset);
+  engine.reset(presets.find((p) => p.id === presetId)?.objects); // unknown id: points A and B
   fit();
 }
 
@@ -1092,6 +1132,7 @@ function applyLanguage(): void {
   nameField.setAttribute("aria-label", t("ui.name"));
   langSel.value = lang;
   renderStepper();
+  renderNewMenu();
   engine.labelLang = lang;
   updateStatus();
   renderSteps();
@@ -1114,7 +1155,6 @@ const actions: Record<string, () => void> = {
   "step-through": () => (ui.stepThrough === null ? startStepThrough() : stopStepThrough()),
   undo: () => engine.undo(),
   redo: () => engine.redo(),
-  ...Object.fromEntries(PRESET_IDS.map((id) => [`new:${id}`, () => newConstruction(id)])),
   save,
   load: () => fileInput.click(),
   fit,
@@ -1181,3 +1221,4 @@ applyLanguage();
 setTool("move");
 updateHistoryButtons();
 requestAnimationFrame(fit);
+void loadPresets();

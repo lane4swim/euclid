@@ -1,71 +1,68 @@
-// Start configurations: objects that are given and need not be constructed.
-// Pure data builders, no DOM. See spec.md, "Start configurations".
+// Start configurations, loaded from a JSON file (web/presets.json on the site).
+// Parsing and validation only; no DOM. See spec.md, "Start configurations".
 //
-// Given lines and circles that should not show their defining points are built
-// from "handle" points: hidden helper points that are never drawn, picked,
-// listed or reused as existing points. A circle without a known center, for
-// example, is a circle around a hidden handle, so constructing its center
-// yields a genuinely new point.
+// File format:
+//   { "format": "compass-presets", "version": 1,
+//     "presets": [ { "id": "twoLines",
+//                    "name": { "de": "Zwei Geraden", "en": "Two lines" },
+//                    "objects": [ ...given objects, as in a saved construction... ] } ] }
+//
+// Objects use the saved-file format. A label may be a string, or { "de": …, "en": … }
+// for language-dependent labels (German lines g, h, circles k; English l, m, c).
+// Lines and circles that should not show their defining points are built from
+// "handle" points ({ "kind": "handle", "pos": … }): hidden helpers that are never drawn,
+// picked, listed or reused as existing points. Each preset is checked with the same
+// validation as a saved file; a broken preset is skipped and reported, the others load.
 
+import { validateFile } from "./engine.js";
 import type { Lang } from "./i18n.js";
-import type { GeoObject, ID, PointObject, Vec } from "./model.js";
+import type { GeoObject } from "./model.js";
 
-export type PresetId = "twoPoints" | "threePoints" | "lineAndPoint" | "twoLines" | "circleAndPoint" | "circleNoCenter";
+export interface Preset {
+  id: string;
+  name: string;
+  objects: GeoObject[];
+}
 
-export const PRESET_IDS: readonly PresetId[] = ["twoPoints", "threePoints", "lineAndPoint", "twoLines", "circleAndPoint", "circleNoCenter"];
+export const PRESET_FILE_FORMAT = "compass-presets";
+const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const isObj = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 
-export const DEFAULT_PRESET: PresetId = "twoPoints";
+/** A string, or a { de, en } object (falls back to the other language). */
+function localized(v: unknown, lang: Lang): string | null {
+  if (typeof v === "string") return v;
+  if (!isObj(v)) return null;
+  const own = v[lang], other = v[lang === "de" ? "en" : "de"];
+  return typeof own === "string" ? own : typeof other === "string" ? other : null;
+}
 
-/** Default stroke colors, as in the engine (kept here so presets need no engine import). */
-const COLOR = { point: "#222222", line: "#0072B2", circle: "#D55E00" };
+/**
+ * Parse a presets file for one language. Returns the valid presets in file order and
+ * one message per skipped preset (or for the whole file, if it is not a presets file).
+ */
+export function parsePresets(data: unknown, lang: Lang): { presets: Preset[]; errors: string[] } {
+  const errors: string[] = [];
+  if (!isObj(data) || data.format !== PRESET_FILE_FORMAT) return { presets: [], errors: ["not a presets file (format must be \"compass-presets\")"] };
+  if (data.version !== 1) return { presets: [], errors: [`unsupported presets version ${String(data.version)}`] };
+  if (!Array.isArray(data.presets)) return { presets: [], errors: ["presets missing"] };
 
-/** Labels of given curves: German g, h, k; English l, m, c (constructed ones get numbers: g1, k1, …). */
-const CURVE_LABELS: Record<Lang, { lines: [string, string]; circle: string }> = {
-  de: { lines: ["g", "h"], circle: "k" },
-  en: { lines: ["l", "m"], circle: "c" },
-};
-
-const point = (id: ID, pos: Vec): PointObject =>
-  ({ id, type: "point", label: id, def: { kind: "given", pos: { ...pos } }, view: { visible: true, color: COLOR.point } });
-
-/** A hidden helper point; label "_n" keeps labels unique without ever being shown. */
-const handle = (n: number, pos: Vec): PointObject =>
-  ({ id: `H${n}`, type: "point", label: `_${n}`, def: { kind: "handle", pos: { ...pos } }, view: { visible: false, color: COLOR.point } });
-
-/** The given objects of a start configuration, in order. */
-export function buildPreset(id: PresetId, lang: Lang): GeoObject[] {
-  const L = CURVE_LABELS[lang];
-  switch (id) {
-    case "twoPoints":
-      return [point("A", { x: -1, y: 0 }), point("B", { x: 1, y: 0 })];
-    case "threePoints":
-      return [point("A", { x: -1.6, y: -0.9 }), point("B", { x: 1.6, y: -0.9 }), point("C", { x: 0.4, y: 1.5 })];
-    case "lineAndPoint":
-      return [
-        handle(1, { x: -2.5, y: -0.6 }), handle(2, { x: 2.5, y: -0.3 }),
-        { id: "L1", type: "line", label: L.lines[0], def: { p1: "H1", p2: "H2" }, view: { visible: true, color: COLOR.line } },
-        point("P", { x: 0.3, y: 1.3 }),
-      ];
-    case "twoLines":
-      return [
-        handle(1, { x: -2.6, y: -1.3 }), handle(2, { x: 2.4, y: 0.9 }),
-        { id: "L1", type: "line", label: L.lines[0], def: { p1: "H1", p2: "H2" }, view: { visible: true, color: COLOR.line } },
-        handle(3, { x: -2.2, y: 1.5 }), handle(4, { x: 2.6, y: -0.9 }),
-        { id: "L2", type: "line", label: L.lines[1], def: { p1: "H3", p2: "H4" }, view: { visible: true, color: COLOR.line } },
-      ];
-    case "circleAndPoint":
-      // Circle around the visible given point M; the radius comes from two hidden handles,
-      // so dragging M moves the circle without changing its size.
-      return [
-        point("M", { x: -0.6, y: 0 }),
-        handle(1, { x: 0, y: 0 }), handle(2, { x: 1.4, y: 0 }),
-        { id: "C1", type: "circle", label: L.circle, def: { kind: "radiusFromPoints", center: "M", r1: "H1", r2: "H2" }, view: { visible: true, color: COLOR.circle, arcMode: false } },
-        point("P", { x: 2.4, y: 0.8 }),
-      ];
-    case "circleNoCenter":
-      return [
-        handle(1, { x: 0, y: 0 }), handle(2, { x: 1.5, y: 0 }),
-        { id: "C1", type: "circle", label: L.circle, def: { kind: "throughPoint", center: "H1", through: "H2" }, view: { visible: true, color: COLOR.circle, arcMode: false } },
-      ];
-  }
+  const presets: Preset[] = [];
+  const ids = new Set<string>();
+  data.presets.forEach((raw: unknown, i: number) => {
+    const where = `preset ${i + 1}`;
+    if (!isObj(raw)) { errors.push(`${where}: not an object`); return; }
+    const id = raw.id;
+    if (typeof id !== "string" || !ID_RE.test(id)) { errors.push(`${where}: id missing or invalid`); return; }
+    if (ids.has(id)) { errors.push(`${where} (${id}): duplicate id`); return; }
+    const name = localized(raw.name, lang);
+    if (!name) { errors.push(`${where} (${id}): name missing`); return; }
+    if (!Array.isArray(raw.objects) || raw.objects.length === 0) { errors.push(`${where} (${id}): objects missing`); return; }
+    // Resolve language-dependent labels, then validate exactly like a saved construction.
+    const objects = raw.objects.map((o: unknown) => (isObj(o) && isObj(o.label) ? { ...o, label: localized(o.label, lang) } : o));
+    const v = validateFile({ format: "compass-construction", version: 2, given: objects.length, objects, cursor: objects.length });
+    if (typeof v === "string") { errors.push(`${where} (${id}): ${v}`); return; }
+    ids.add(id);
+    presets.push({ id, name, objects: v.objects });
+  });
+  return { presets, errors };
 }

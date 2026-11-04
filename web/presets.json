@@ -1,0 +1,65 @@
+{
+  "format": "compass-presets",
+  "version": 1,
+  "presets": [
+    {
+      "id": "twoPoints",
+      "name": { "de": "Zwei Punkte A, B", "en": "Two points A, B" },
+      "objects": [
+        { "id": "A", "type": "point", "label": "A", "def": { "kind": "given", "pos": { "x": -1, "y": 0 } }, "view": { "visible": true, "color": "#222222" } },
+        { "id": "B", "type": "point", "label": "B", "def": { "kind": "given", "pos": { "x": 1, "y": 0 } }, "view": { "visible": true, "color": "#222222" } }
+      ]
+    },
+    {
+      "id": "threePoints",
+      "name": { "de": "Drei Punkte A, B, C", "en": "Three points A, B, C" },
+      "objects": [
+        { "id": "A", "type": "point", "label": "A", "def": { "kind": "given", "pos": { "x": -1.6, "y": -0.9 } }, "view": { "visible": true, "color": "#222222" } },
+        { "id": "B", "type": "point", "label": "B", "def": { "kind": "given", "pos": { "x": 1.6, "y": -0.9 } }, "view": { "visible": true, "color": "#222222" } },
+        { "id": "C", "type": "point", "label": "C", "def": { "kind": "given", "pos": { "x": 0.4, "y": 1.5 } }, "view": { "visible": true, "color": "#222222" } }
+      ]
+    },
+    {
+      "id": "lineAndPoint",
+      "name": { "de": "Gerade und Punkt", "en": "Line and point" },
+      "objects": [
+        { "id": "H1", "type": "point", "label": "_1", "def": { "kind": "handle", "pos": { "x": -2.5, "y": -0.6 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "H2", "type": "point", "label": "_2", "def": { "kind": "handle", "pos": { "x": 2.5, "y": -0.3 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "L1", "type": "line", "label": { "de": "g", "en": "l" }, "def": { "p1": "H1", "p2": "H2" }, "view": { "visible": true, "color": "#0072B2" } },
+        { "id": "P", "type": "point", "label": "P", "def": { "kind": "given", "pos": { "x": 0.3, "y": 1.3 } }, "view": { "visible": true, "color": "#222222" } }
+      ]
+    },
+    {
+      "id": "twoLines",
+      "name": { "de": "Zwei sich schneidende Geraden", "en": "Two intersecting lines" },
+      "objects": [
+        { "id": "H1", "type": "point", "label": "_1", "def": { "kind": "handle", "pos": { "x": -2.6, "y": -1.3 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "H2", "type": "point", "label": "_2", "def": { "kind": "handle", "pos": { "x": 2.4, "y": 0.9 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "L1", "type": "line", "label": { "de": "g", "en": "l" }, "def": { "p1": "H1", "p2": "H2" }, "view": { "visible": true, "color": "#0072B2" } },
+        { "id": "H3", "type": "point", "label": "_3", "def": { "kind": "handle", "pos": { "x": -2.2, "y": 1.5 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "H4", "type": "point", "label": "_4", "def": { "kind": "handle", "pos": { "x": 2.6, "y": -0.9 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "L2", "type": "line", "label": { "de": "h", "en": "m" }, "def": { "p1": "H3", "p2": "H4" }, "view": { "visible": true, "color": "#0072B2" } }
+      ]
+    },
+    {
+      "id": "circleAndPoint",
+      "name": { "de": "Kreis mit Mittelpunkt und Punkt außerhalb", "en": "Circle with center and a point outside" },
+      "objects": [
+        { "id": "M", "type": "point", "label": "M", "def": { "kind": "given", "pos": { "x": -0.6, "y": 0 } }, "view": { "visible": true, "color": "#222222" } },
+        { "id": "H1", "type": "point", "label": "_1", "def": { "kind": "handle", "pos": { "x": 0, "y": 0 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "H2", "type": "point", "label": "_2", "def": { "kind": "handle", "pos": { "x": 1.4, "y": 0 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "C1", "type": "circle", "label": { "de": "k", "en": "c" }, "def": { "kind": "radiusFromPoints", "center": "M", "r1": "H1", "r2": "H2" }, "view": { "visible": true, "color": "#D55E00", "arcMode": false } },
+        { "id": "P", "type": "point", "label": "P", "def": { "kind": "given", "pos": { "x": 2.4, "y": 0.8 } }, "view": { "visible": true, "color": "#222222" } }
+      ]
+    },
+    {
+      "id": "circleNoCenter",
+      "name": { "de": "Kreis ohne Mittelpunkt", "en": "Circle without center" },
+      "objects": [
+        { "id": "H1", "type": "point", "label": "_1", "def": { "kind": "handle", "pos": { "x": 0, "y": 0 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "H2", "type": "point", "label": "_2", "def": { "kind": "handle", "pos": { "x": 1.5, "y": 0 } }, "view": { "visible": false, "color": "#222222" } },
+        { "id": "C1", "type": "circle", "label": { "de": "k", "en": "c" }, "def": { "kind": "throughPoint", "center": "H1", "through": "H2" }, "view": { "visible": true, "color": "#D55E00", "arcMode": false } }
+      ]
+    }
+  ]
+}
