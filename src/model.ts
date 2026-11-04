@@ -6,7 +6,8 @@ export type { Vec };
 export type ID = string;
 
 export type PointDef =
-  | { kind: "given"; pos: Vec }            // only A and B
+  | { kind: "given"; pos: Vec }            // given point of the start configuration; draggable
+  | { kind: "handle"; pos: Vec }           // hidden helper defining a given line or circle; never drawn or picked
   | { kind: "free"; pos: Vec }             // arbitrary point placed by the user; draggable
   // Arbitrary point bound to a line, circle or segment; draggable along it.
   // Lines/segments: t is the fraction from p1 to p2 (clamped to [0, 1] on segments).
@@ -71,7 +72,9 @@ export type Result<T> =
 
 export interface SavedFile {
   format: "compass-construction";
-  version: 1;
+  version: 1 | 2;
+  /** Version 2: objects[0..given) are the start configuration (version 1: always A and B). */
+  given?: number;
   objects: GeoObject[];
   cursor: number;
 }

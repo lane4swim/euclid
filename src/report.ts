@@ -2,7 +2,7 @@
 // No DOM access: the caller passes the SVG markup (from the shared draw function).
 
 import type { Engine } from "./engine.js";
-import { format, formatParts, type Lang, type MessageId, type TextPart } from "./i18n.js";
+import { format, type Lang, type MessageId, type TextPart } from "./i18n.js";
 
 export type ReportFormat = "md" | "html";
 
@@ -15,8 +15,7 @@ export interface ReportOptions {
 interface ReportStep { number: number; parts: TextPart[]; reason: string | null }
 
 function collect(e: Engine, lang: Lang): { given: TextPart[]; steps: ReportStep[] } {
-  const label = (id: string) => e.get(id)?.label ?? id;
-  const given = formatParts(lang, "step.given", { a: label("A"), b: label("B") });
+  const given = e.givenParts(lang);
   const steps = e.steps(lang).map((s) => ({
     number: s.number,
     parts: s.parts,

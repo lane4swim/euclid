@@ -54,7 +54,17 @@
     </div>
 
     <div class="group" role="group">
-      <button type="button" data-action="new" data-i18n-title="ui.new"><span data-i18n="ui.new">Neu</span></button>
+      <details id="new-menu" class="menu">
+        <summary data-i18n="ui.newMenu">Neu</summary>
+        <div class="menu-items">
+          <button type="button" data-action="new:twoPoints" data-i18n="preset.twoPoints">twoPoints</button>
+          <button type="button" data-action="new:threePoints" data-i18n="preset.threePoints">threePoints</button>
+          <button type="button" data-action="new:lineAndPoint" data-i18n="preset.lineAndPoint">lineAndPoint</button>
+          <button type="button" data-action="new:twoLines" data-i18n="preset.twoLines">twoLines</button>
+          <button type="button" data-action="new:circleAndPoint" data-i18n="preset.circleAndPoint">circleAndPoint</button>
+          <button type="button" data-action="new:circleNoCenter" data-i18n="preset.circleNoCenter">circleNoCenter</button>
+        </div>
+      </details>
       <button type="button" data-action="save" data-i18n-title="ui.save"><span data-i18n="ui.save">Speichern</span></button>
       <button type="button" data-action="load" data-i18n-title="ui.load"><span data-i18n="ui.load">Öffnen</span></button>
       <input type="file" id="file-input" accept=".json,application/json" hidden>

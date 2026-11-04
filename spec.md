@@ -10,7 +10,7 @@ The site is one static page (HTML, CSS, TypeScript compiled to one JS file or in
 
 | Topic | Decision |
 | --- | --- |
-| Starting objects | Two given points, A and B. Later points are intersections of two existing curves, or arbitrary points placed by the user: free in the plane, or attached to a line, circle or segment. |
+| Starting objects | A start configuration of given objects that need not be constructed (default: two points A and B; see "Start configurations"). Later points are intersections of two existing curves, or arbitrary points placed by the user: free in the plane, or attached to a line, circle or segment. |
 | Curves | Infinite lines through two points; circles (two creation tools, see below); segments (see below). Nothing else may be intersected. |
 | Compass model | Rigid compass: a circle may take its radius from the distance of two other points. |
 | Circle tools | Both: (1) center + point on the circle; (2) center + two points whose distance is the radius. |
@@ -80,7 +80,8 @@ interface Derived {
 }
 
 interface Construction {
-  objects: GeoObject[];                    // index 0 and 1 are A and B
+  objects: GeoObject[];                    // objects[0..given) are the start configuration (default: A and B)
+  given: number;                           // length of the start configuration
   derived: Map<ID, Derived>;
   cursor: number;                          // objects[0..cursor) are active; the rest is redo
   counters: { line: number; circle: number; segment: number };
@@ -89,9 +90,9 @@ interface Construction {
 
 Rules that follow from this model:
 
-- **Steps are derived.** Step n is object n+1 (A and B are "Given"). A step's text is generated from its definition and the current language, never stored, so switching language rewrites the list.
+- **Steps are derived.** Step n is object `given + n − 1`; the start configuration is listed as "Given". A step's text is generated from its definition and the current language, never stored, so switching language rewrites the list.
 - **Dependencies are explicit.** `deps(obj)` returns the ids named in `def`. Deleting an object deletes everything that transitively depends on it, after a confirmation that lists what goes.
-- **Labels.** New intersection points get the next free capital letter after B (C, D, …, Z, then A1, B1, …). Lines get `g1, g2, …`, circles `k1, k2, …`, segments `s1, s2, …` (German convention; English UI uses `l1`, `c1`, `s1`). Labels must be unique; renaming to a taken label is refused.
+- **Labels.** New points get the first free capital letter (after the given A and B: C, D, …, Z, then A1, B1, …). Lines get `g1, g2, …`, circles `k1, k2, …`, segments `s1, s2, …` (German convention; English UI uses `l1`, `c1`, `s1`). Labels must be unique; renaming to a taken label is refused.
 - **Duplicates.** A new point whose position matches an existing point within tolerance is not created; the existing point is selected instead. Creating a line or circle equal to an existing one is refused with a message naming it.
 - **Invalid objects stay.** If dragging A or B makes an intersection vanish, dependents become `valid: false`, are drawn greyed out in the step list and hidden on the canvas, and revive when the intersection returns.
 
@@ -164,7 +165,7 @@ class Engine {
   dependentsOf(id: ID): ID[];                             // for the confirm dialog
 
   // History
-  undo(): void;  redo(): void;  reset(): void;
+  undo(): void;  redo(): void;  reset(preset?: PresetId): void;   // reset starts a new construction from a start configuration
   canUndo(): boolean;  canRedo(): boolean;
 
   // Data
@@ -259,7 +260,8 @@ Row actions: eye (show or hide), rename, color, line width (lines, circles and s
 ```json
 {
   "format": "compass-construction",
-  "version": 1,
+  "version": 2,
+  "given": 2,
   "objects": [
     { "id": "A", "type": "point", "label": "A", "def": { "kind": "given", "pos": { "x": -1, "y": 0 } }, "view": { "visible": true, "color": "#222" } },
     { "id": "B", "type": "point", "label": "B", "def": { "kind": "given", "pos": { "x": 1, "y": 0 } }, "view": { "visible": true, "color": "#222" } },
@@ -269,7 +271,7 @@ Row actions: eye (show or hide), rename, color, line width (lines, circles and s
 }
 ```
 
-On load the engine validates before accepting anything: correct `format` and a known `version`; unique ids and labels; A and B first and of kind `given`; every referenced id appears earlier in the list; `pick` is 0 or 1; type matches definition; file size under 1 MB. Any failure rejects the whole file with a message naming the first problem and leaves the current construction untouched. Unknown extra fields are ignored. Files with a higher version number are refused, not guessed at.
+On load the engine validates before accepting anything: correct `format` and a known `version` (1 or 2); unique ids and labels; in version 1, A and B first and of kind `given`; in version 2, a valid `given` count whose objects are only given points, handles, lines, circles and segments, with no given points or handles after it and no constructed object referring to a handle; every referenced id appears earlier in the list; `pick` is 0 or 1; type matches definition; file size under 1 MB. Any failure rejects the whole file with a message naming the first problem and leaves the current construction untouched. Unknown extra fields are ignored. Files with a higher version number are refused, not guessed at.
 
 **Export.**
 
@@ -321,3 +323,5 @@ The spec above assumes the default shown for each question. All questions are no
 **Follow-up: arbitrary points.** Decided (Nov 1, 2026): the user can place arbitrary (free) points anywhere in the plane, with the Point tool or by clicking empty space in the line, circle and segment tools. They are numbered steps ("Arbitrary point C"), draggable like A and B, and saved with their position. Points bound to a curve were added in a second step (see below).
 
 **Follow-up: points on curves.** Decided (Nov 1, 2026): an arbitrary point can be attached to a line, circle or segment ("Arbitrary point C on g1"). It is stored by curve and parameter, so it stays on its curve when the construction moves, and dragging it slides it along the curve. A point attached to a curve counts as a used point of that curve. Deleting the curve deletes the point.
+
+**Follow-up: start configurations.** Decided (Nov 4, 2026): a construction can start from given objects other than two points. The "New" menu offers: two points A, B (default); three points A, B, C; a line and a point; two intersecting lines; a circle with center M and a point P outside; a circle without center. The objects of the start configuration form a prefix of the object list (`given` objects; saved as `"given"` in file version 2). They are listed as "Given: …" (for example "Given: line g and point P"), are not numbered steps, cannot be deleted, and can be used like any other object. Given lines and circles whose defining points should not appear are built from *handles*: hidden helper points that are never drawn, picked, listed, reused as existing points or referenced by later steps. A circle without center is a circle around a handle, so constructing its center yields a new point. Given points are dragged as before; a given line or circle is dragged by its curve, which translates it. Starting a new construction is undoable. Version 1 files still load, with A and B as the start configuration.
