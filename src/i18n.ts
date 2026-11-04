@@ -8,7 +8,14 @@ type Table = Record<string, { de: string; en: string }>;
 
 export const messages = {
   // Step sentences
-  "step.given": { de: "Gegeben: Punkte {a} und {b}", en: "Given: points {a} and {b}" },
+  "given.points": { de: "Gegeben: Punkte {list}", en: "Given: points {list}" },
+  "given.point": { de: "Gegeben: Punkt {list}", en: "Given: point {list}" },
+  "given.mixed": { de: "Gegeben: {list}", en: "Given: {list}" },
+  "given.item.point": { de: "Punkt {label}", en: "point {label}" },
+  "given.item.line": { de: "Gerade {label}", en: "line {label}" },
+  "given.item.segment": { de: "Strecke {label}", en: "segment {label}" },
+  "given.item.circle": { de: "Kreis {label} um {center}", en: "circle {label} with center {center}" },
+  "given.item.circleNoCenter": { de: "Kreis {label} (Mittelpunkt nicht gegeben)", en: "circle {label} (center not given)" },
   "step.free": { de: "Beliebiger Punkt {label}", en: "Arbitrary point {label}" },
   "step.onCurve": { de: "Beliebiger Punkt {label} auf {curve}", en: "Arbitrary point {label} on {curve}" },
   "step.line": { de: "Gerade {label} durch {p1} und {p2}", en: "Line {label} through {p1} and {p2}" },
@@ -103,7 +110,9 @@ export const messages = {
   "ui.existingPoint": { de: "Der Punkt {label} existiert schon und ist jetzt ausgewählt", en: "Point {label} already exists and is now selected" },
   "ui.loaded": { de: "Konstruktion geladen", en: "Construction loaded" },
   "ui.fileName": { de: "konstruktion", en: "construction" },
-  "hint.move": { de: "Ziehe A, B oder beliebige Punkte. Klicke ein Objekt an, um es auszuwählen.", en: "Drag A, B or arbitrary points. Click an object to select it." },
+  "hint.move": { de: "Ziehe gegebene oder beliebige Punkte, gegebene Geraden und Kreise. Klicke ein Objekt an, um es auszuwählen.", en: "Drag given or arbitrary points, and given lines and circles. Click an object to select it." },
+  "ui.newMenu": { de: "Neu", en: "New" },
+  "preset.default": { de: "Zwei Punkte A, B", en: "Two points A, B" },
   "hint.line.0": { de: "Ersten Punkt der Geraden wählen oder auf eine freie Stelle bzw. Linie klicken", en: "Choose the first point of the line, or click empty space or a line for a new one" },
   "hint.line.1": { de: "Zweiten Punkt der Geraden wählen oder auf eine freie Stelle bzw. Linie klicken", en: "Choose the second point of the line, or click empty space or a line for a new one" },
   "hint.circle.0": { de: "Mittelpunkt wählen oder auf eine freie Stelle bzw. Linie klicken", en: "Choose the center, or click empty space or a line for a new point" },
@@ -144,6 +153,21 @@ export function formatParts(lang: Lang, id: MessageId, slots: Slots = {}, partSl
     last = idx + m[0].length;
   }
   if (last < tpl.length) out.push({ text: tpl.slice(last) });
+  return out;
+}
+
+/**
+ * Join items into a list with the language's conjunction ("A, B und C" / "A, B, and C"),
+ * keeping each item's parts (and so its slots). Uses Intl.ListFormat for the separators.
+ */
+export function joinParts(lang: Lang, items: TextPart[][]): TextPart[] {
+  if (items.length === 0) return [];
+  const marks = items.map((_, i) => `\u0000${i}\u0000`);
+  const out: TextPart[] = [];
+  for (const p of new Intl.ListFormat(lang, { style: "long", type: "conjunction" }).formatToParts(marks)) {
+    if (p.type === "element") out.push(...items[marks.indexOf(p.value)]);
+    else out.push({ text: p.value });
+  }
   return out;
 }
 

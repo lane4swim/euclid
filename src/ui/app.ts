@@ -1,6 +1,7 @@
 // Browser UI: wires the engine to the SVG drawing, toolbar and step list.
 
 import { Engine } from "../engine.js";
+import { parsePresets, type Preset } from "../presets.js";
 import { format, formatParts, messages, type Lang, type MessageId } from "../i18n.js";
 import { dist, type Vec } from "../kernel.js";
 import { DEFAULT_WIDTH, deps, hasWidth, type ErrorCode, type GeoObject, type ID, type Result } from "../model.js";
@@ -58,7 +59,6 @@ const fileInput = $<HTMLInputElement>("file-input");
 const infiniteBox = $<HTMLInputElement>("infinite");
 const themeSel = $<HTMLSelectElement>("theme");
 const langSel = $<HTMLSelectElement>("lang");
-const exportMenu = $<HTMLDetailsElement>("export-menu");
 
 let engine = new Engine();
 
@@ -164,15 +164,15 @@ function draw(): void {
   if (ui.selected) hl.add(ui.selected);
   for (const p of ui.picked) if ("id" in p) hl.add(p.id);
   if (ui.candidateCurves) ui.candidateCurves.forEach((id) => hl.add(id));
-  const stepObj = ui.stepThrough ? engine.objects[ui.stepThrough + 1] : null; // step k is objects[k + 1]
+  const stepObj = ui.stepThrough ? engine.objects[engine.stepIndex(ui.stepThrough)] : null;
   const focusObj = stepObj ?? (ui.highlightStep ? engine.get(ui.highlightStep) : null);
   if (focusObj) { hl.add(focusObj.id); deps(focusObj).forEach((d) => hl.add(d)); }
-  const last = stepObj ? stepObj.id : engine.cursor > 2 ? engine.objects[engine.cursor - 1].id : null;
+  const last = stepObj ? stepObj.id : engine.cursor > engine.given ? engine.objects[engine.cursor - 1].id : null;
   const hover = ui.hover && (ui.hover.kind === "point" || ui.hover.kind === "curve" || ui.hover.kind === "segment") ? ui.hover.id : null;
   svg.innerHTML = drawSVG(engine, {
     view: ui.view, width: w, height: h, palette: palette(), infiniteLines: ui.settings.showInfiniteLines,
     interactive: true, hover, highlight: hl, current: last, ghost: ghost(), fadeAfter: focusIndex(), fadeNonFinal: ui.finalView,
-    hideAfter: ui.stepThrough === null ? null : ui.stepThrough + 1,
+    hideAfter: ui.stepThrough === null ? null : engine.stepIndex(ui.stepThrough), // step 0: only the given objects
     snap: ui.hover?.kind === "snap" ? ui.hover.snap.pos
       : ui.hover && (ui.hover.kind === "curve" || ui.hover.kind === "segment") && takesPoints() ? hitPos(ui.hover) ?? null : null,
     candidates: ui.candidates.map((c) => ({ pos: c.pos, n: c.pick + 1, hover: ui.hover?.kind === "candidate" && ui.hover.pick === c.pick })),
@@ -182,9 +182,9 @@ function draw(): void {
 
 function updateCursor(): void {
   const h = ui.hover;
-  if (gesture?.kind === "drag") svg.style.cursor = "grabbing";
+  if (gesture?.kind === "drag" || gesture?.kind === "dragCurve") svg.style.cursor = "grabbing";
   else if (gesture?.kind === "pan" && gesture.moved) svg.style.cursor = "move";
-  else if (h && ui.tool === "move" && h.kind === "point" && engine.isDraggable(h.id)) svg.style.cursor = "grab";
+  else if (h && ui.tool === "move" && (h.kind === "point" ? engine.isDraggable(h.id) : "id" in h && engine.givenAnchors(h.id).length > 0)) svg.style.cursor = "grab";
   else if (h) svg.style.cursor = "pointer";
   else svg.style.cursor = ui.tool === "move" ? "default" : "crosshair";
 }
@@ -337,9 +337,9 @@ function cancelPick(): void {
  * the steps after it are shown lighter in the list and faded in the drawing.
  */
 function focusIndex(): number | null {
-  if (ui.stepThrough !== null) return ui.stepThrough + 1;
+  if (ui.stepThrough !== null) return engine.stepIndex(ui.stepThrough);
   const i = ui.selected ? engine.indexOf(ui.selected) : -1;
-  return i >= 2 ? i : null;
+  return i >= engine.given ? i : null;
 }
 
 /**
@@ -350,7 +350,7 @@ function updateRowStates(): void {
   const focus = focusIndex();
   for (const li of stepList.querySelectorAll<HTMLElement>("li[data-id]")) {
     const id = li.dataset.id!;
-    const sel = ui.stepThrough !== null ? engine.indexOf(id) === ui.stepThrough + 1 : id === ui.selected;
+    const sel = ui.stepThrough !== null ? engine.indexOf(id) === engine.stepIndex(ui.stepThrough) : id === ui.selected;
     li.classList.toggle("selected", sel);
     li.setAttribute("aria-selected", String(sel));
     const lighter = ui.finalView ? !engine.get(id)?.view.final : focus !== null && engine.indexOf(id) > focus;
@@ -366,13 +366,13 @@ function updateRowStates(): void {
 
 // ------------------------------------------------------------ step-through
 
-const stepCount = () => engine.cursor - 2;
+const stepCount = () => engine.cursor - engine.given;
 
 /** Start stepping through the construction: at the selected step, or at the given points. */
 function startStepThrough(): void {
   if (nameTarget) closeNameField(true);
   const i = ui.selected ? engine.indexOf(ui.selected) : -1;
-  const start = i >= 2 ? i - 1 : 0;
+  const start = i >= engine.given ? i - engine.given + 1 : 0;
   ui.tool = "move";
   for (const b of document.querySelectorAll<HTMLButtonElement>("[data-tool]")) b.setAttribute("aria-pressed", "false");
   cancelPick();
@@ -396,7 +396,7 @@ function stepTo(k: number): void {
   ui.stepThrough = Math.max(0, Math.min(stepCount(), k));
   renderStepper();
   updateRowStates();
-  const obj = engine.objects[ui.stepThrough + 1];
+  const obj = engine.objects[engine.stepIndex(ui.stepThrough)];
   if (ui.stepThrough > 0 && obj) stepList.querySelector<HTMLElement>(`li[data-id="${CSS.escape(obj.id)}"]`)?.scrollIntoView({ block: "nearest" });
   scheduleDraw();
 }
@@ -411,7 +411,7 @@ function renderStepper(): void {
   const k = ui.stepThrough!, n = stepCount(), lang = ui.settings.lang;
   if (k === 0) {
     stepperCount.textContent = t("ui.stepStart", { n: String(n) });
-    stepperDesc.replaceChildren(...partsToNodes(formatParts(lang, "step.given", { a: label("A"), b: label("B") })));
+    stepperDesc.replaceChildren(...partsToNodes(engine.givenParts(lang)));
   } else {
     stepperCount.textContent = t("ui.stepCount", { k: String(k), n: String(n) });
     const s = engine.steps(lang)[k - 1];
@@ -463,7 +463,7 @@ function select(id: ID | null): void {
   if (ui.stepThrough !== null) {
     // While stepping, choosing a step's object jumps there; anything else is ignored.
     const i = id ? engine.indexOf(id) : -1;
-    if (i >= 2) stepTo(i - 1);
+    if (i >= engine.given) stepTo(i - engine.given + 1);
     return;
   }
   ui.selected = id;
@@ -602,6 +602,8 @@ nameField.addEventListener("blur", () => { if (nameTarget) closeNameField(true);
 
 type Gesture =
   | { kind: "drag"; id: ID; offset: Vec; moved: boolean }
+  /** A given line or circle: all its anchor points move by the pointer's offset from `start`. */
+  | { kind: "dragCurve"; id: ID; start: Vec; anchors: { id: ID; pos: Vec }[]; moved: boolean }
   | { kind: "pan"; start: Vec; origin: Vec; moved: boolean; hit: Hit | null; place: boolean }
   | { kind: "pinch"; d0: number; world0: Vec; scale0: number };
 let gesture: Gesture | null = null;
@@ -624,7 +626,7 @@ function startPinch(): void {
 svg.addEventListener("pointerdown", (ev) => {
   if (ev.button !== 0 && ev.pointerType === "mouse") return;
   if (nameTarget) closeNameField(true);
-  exportMenu.open = false;
+  closeMenus();
   // Keep focus handling in our hands, so the name field opened by this click stays focused.
   ev.preventDefault();
   if (document.activeElement !== svg) svg.focus({ preventScroll: true });
@@ -632,7 +634,7 @@ svg.addEventListener("pointerdown", (ev) => {
   const q = local(ev);
   pointers.set(ev.pointerId, q);
   if (pointers.size === 2) {
-    if (gesture?.kind === "drag") engine.endMove();
+    if (gesture?.kind === "drag" || gesture?.kind === "dragCurve") engine.endMove();
     startPinch();
     return;
   }
@@ -649,6 +651,17 @@ svg.addEventListener("pointerdown", (ev) => {
       const wq = toWorld(ui.view, w, h, q), p = engine.pos(hit.id)!;
       engine.beginMove();
       gesture = { kind: "drag", id: hit.id, offset: { x: wq.x - p.x, y: wq.y - p.y }, moved: false };
+      updateCursor();
+      return;
+    }
+    const anchors = hit && (hit.kind === "curve" || hit.kind === "segment") ? engine.givenAnchors(hit.id) : [];
+    if (hit && "id" in hit && anchors.length) {
+      const { w, h } = size();
+      engine.beginMove();
+      gesture = {
+        kind: "dragCurve", id: hit.id, start: toWorld(ui.view, w, h, q), moved: false,
+        anchors: anchors.map((id) => ({ id, pos: { ...engine.pos(id)! } })),
+      };
       updateCursor();
       return;
     }
@@ -673,6 +686,14 @@ svg.addEventListener("pointermove", (ev) => {
     const s = clampScale(gesture.scale0 * Math.max(1, dist(p, r)) / gesture.d0);
     ui.view = { scale: s, origin: { x: gesture.world0.x - (mid.x - w / 2) / s, y: gesture.world0.y + (mid.y - h / 2) / s } };
     scheduleDraw();
+    return;
+  }
+  if (gesture?.kind === "dragCurve") {
+    const g = gesture;
+    if (!g.moved && dist(toScreen(ui.view, w, h, g.start), q) <= 3) return; // a click, not a drag
+    g.moved = true;
+    const dx = ui.pointer.x - g.start.x, dy = ui.pointer.y - g.start.y;
+    engine.movePoints(g.anchors.map((a) => ({ id: a.id, pos: { x: a.pos.x + dx, y: a.pos.y + dy } })));
     return;
   }
   if (gesture?.kind === "drag") {
@@ -701,7 +722,7 @@ function endPointer(ev: PointerEvent): void {
   const g = gesture;
   if (g?.kind === "pinch") { gesture = null; return; }
   gesture = null;
-  if (g?.kind === "drag") {
+  if (g?.kind === "drag" || g?.kind === "dragCurve") {
     engine.endMove();
     if (!g.moved) select(g.id);
   } else if (g?.kind === "pan" && !g.moved && ui.tool === "move") {
@@ -822,7 +843,7 @@ function toHex(c: string): string {
 
 function renderSteps(): void {
   const lang = ui.settings.lang;
-  givenEl.replaceChildren(...partsToNodes(formatParts(lang, "step.given", { a: label("A"), b: label("B") })));
+  givenEl.replaceChildren(...partsToNodes(engine.givenParts(lang)));
   const steps = engine.steps(lang);
   emptyEl.hidden = steps.length > 0;
   const pal = palette();
@@ -1031,6 +1052,65 @@ function exportReport(fmt: ReportFormat): void {
   download(`${t("ui.fileName")}.${fmt}`, new Blob([text], { type }));
 }
 
+/** Close the toolbar's drop-down menus (New, Export). */
+function closeMenus(except?: HTMLDetailsElement): void {
+  for (const m of document.querySelectorAll<HTMLDetailsElement>("details.menu")) if (m !== except) m.open = false;
+}
+
+// Opening one menu closes the other.
+document.querySelectorAll<HTMLDetailsElement>("details.menu").forEach((m) => {
+  m.addEventListener("toggle", () => { if (m.open) closeMenus(m); });
+});
+
+// ---------------------------------------------------------- start configurations
+
+/** Raw contents of presets.json (parsed per language when the menu is built), or null. */
+let presetData: unknown = null;
+/** The start configurations offered in the New menu, in the current language. */
+let presets: Preset[] = [];
+const newMenuItems = $<HTMLElement>("new-menu-items");
+
+/**
+ * Load the start configurations from presets.json next to the page. Without it (offline,
+ * opened from disk, broken file) the New menu offers only the built-in points A and B.
+ */
+async function loadPresets(): Promise<void> {
+  try {
+    const res = await fetch("presets.json", { cache: "no-cache" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    presetData = await res.json();
+    for (const err of parsePresets(presetData, ui.settings.lang).errors) console.warn("presets.json:", err);
+  } catch (err) {
+    console.warn("Start configurations could not be loaded; only the default is offered.", err);
+    presetData = null;
+  }
+  renderNewMenu();
+}
+
+/** Fill the New menu with the start configurations in the current language. */
+function renderNewMenu(): void {
+  presets = presetData ? parsePresets(presetData, ui.settings.lang).presets : [];
+  const items = presets.length ? presets.map((p) => ({ id: p.id, name: p.name })) : [{ id: "", name: t("preset.default") }];
+  newMenuItems.replaceChildren(...items.map(({ id, name }) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = name;
+    b.dataset.preset = id;
+    b.addEventListener("click", () => { closeMenus(); newConstruction(id); });
+    return b;
+  }));
+}
+
+/** Start a new construction from a start configuration (undoable). */
+function newConstruction(presetId: string): void {
+  if (ui.stepThrough !== null) stopStepThrough();
+  if (nameTarget) closeNameField(false);
+  cancelPick();
+  select(null);
+  engine.reset(presets.find((p) => p.id === presetId)?.objects); // unknown id: points A and B
+  fit();
+}
+
 // ------------------------------------------------------------ toolbar & keys
 
 function applyLanguage(): void {
@@ -1052,6 +1132,7 @@ function applyLanguage(): void {
   nameField.setAttribute("aria-label", t("ui.name"));
   langSel.value = lang;
   renderStepper();
+  renderNewMenu();
   engine.labelLang = lang;
   updateStatus();
   renderSteps();
@@ -1074,7 +1155,6 @@ const actions: Record<string, () => void> = {
   "step-through": () => (ui.stepThrough === null ? startStepThrough() : stopStepThrough()),
   undo: () => engine.undo(),
   redo: () => engine.redo(),
-  new: () => { cancelPick(); select(null); engine.reset(); fit(); },
   save,
   load: () => fileInput.click(),
   fit,
@@ -1087,7 +1167,8 @@ const actions: Record<string, () => void> = {
 document.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((b) => {
   b.addEventListener("click", () => {
     actions[b.dataset.action!]?.();
-    if (b.closest("details")) exportMenu.open = false;
+    const menu = b.closest("details");
+    if (menu) menu.open = false;
   });
 });
 
@@ -1121,7 +1202,7 @@ document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") { ev.preventDefault(); stopStepThrough(); return; }
   }
   if (/^[1-7]$/.test(ev.key)) { setTool(TOOLS[Number(ev.key) - 1]); return; }
-  if (ev.key === "Escape") { cancelPick(); select(null); exportMenu.open = false; return; }
+  if (ev.key === "Escape") { cancelPick(); select(null); closeMenus(); return; }
   if ((ev.key === "Delete" || ev.key === "Backspace") && ui.selected) { ev.preventDefault(); removeObject(ui.selected); return; }
   if (key === "f") { fit(); return; }
   if (key === "s" && ui.stepThrough === null) { startStepThrough(); return; }
@@ -1140,3 +1221,4 @@ applyLanguage();
 setTool("move");
 updateHistoryButtons();
 requestAnimationFrame(fit);
+void loadPresets();

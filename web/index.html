@@ -54,7 +54,11 @@
     </div>
 
     <div class="group" role="group">
-      <button type="button" data-action="new" data-i18n-title="ui.new"><span data-i18n="ui.new">Neu</span></button>
+      <details id="new-menu" class="menu">
+        <summary data-i18n="ui.newMenu">Neu</summary>
+        <!-- Filled from presets.json at startup -->
+        <div class="menu-items" id="new-menu-items"></div>
+      </details>
       <button type="button" data-action="save" data-i18n-title="ui.save"><span data-i18n="ui.save">Speichern</span></button>
       <button type="button" data-action="load" data-i18n-title="ui.load"><span data-i18n="ui.load">Öffnen</span></button>
       <input type="file" id="file-input" accept=".json,application/json" hidden>

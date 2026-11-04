@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { parsePresets } from "../src/presets.js";
 import assert from "node:assert/strict";
 import { Engine } from "../src/engine.js";
 import { coveringArc } from "../src/kernel.js";
@@ -17,6 +19,15 @@ function vesica() {
   const D = val(e.addIntersection(k1, k2, 1));
   return { e, k1, k2, C, D };
 }
+
+// Start configurations come from the site's presets file.
+const PRESET_FILE: unknown = JSON.parse(readFileSync(new URL("../../web/presets.json", import.meta.url), "utf8"));
+function preset(id: string, lang: "de" | "en" = "de") {
+  const p = parsePresets(PRESET_FILE, lang).presets.find((x) => x.id === id);
+  assert.ok(p, `preset ${id} missing`);
+  return p;
+}
+const fromPreset = (id: string, lang: "de" | "en" = "de") => Engine.fromStart(preset(id, lang).objects, lang);
 
 test("creation errors", () => {
   const e = new Engine();
@@ -139,10 +150,14 @@ test("file validation rejects bad files and leaves engines untouched", () => {
     return (r as { detail: string }).detail;
   };
   assert.match(bad((f) => { f.format = "x"; }), /format/);
-  assert.match(bad((f) => { f.version = 2; }), /newer/);
+  assert.match(bad((f) => { f.version = 3; }), /newer/);
+  // Version 1 files (no start configuration) still require A and B first.
+  assert.match(bad((f) => { f.version = 1; delete f.given; f.objects.reverse(); }), /given point A/);
   assert.match(bad((f) => { f.objects[3].id = "A"; }), /duplicate id/);
   assert.match(bad((f) => { f.objects[3].label = "k1"; }), /duplicate label/);
-  assert.match(bad((f) => { f.objects.reverse(); }), /given point A/);
+  assert.match(bad((f) => { f.objects.reverse(); }), /start configuration/);
+  assert.match(bad((f) => { f.given = 0; }), /given \(start configuration\) invalid/);
+  assert.match(bad((f) => { f.given = 5; }), /start configuration may only contain/); // a constructed point
   assert.match(bad((f) => { f.objects[4].def.pick = 2; }), /pick/);
   assert.match(bad((f) => { f.objects[2].def.through = "P1"; }), /does not appear earlier/);
   assert.match(bad((f) => { f.objects[2].type = "line"; }), /p1 missing/);
@@ -467,4 +482,103 @@ test("final flag: set on any object, undo/redo, save/load, validation", () => {
   bad.objects[2].view.final = "yes";
   const r = Engine.fromJSON(bad);
   assert.ok(!r.ok && /final must be true or false/.test(r.detail ?? ""));
+});
+
+test("start configurations: given text, labels and steps after the given objects", async () => {
+  const PRESET_IDS = parsePresets(PRESET_FILE, "de").presets.map((x) => x.id);
+  assert.deepEqual(PRESET_IDS, ["twoPoints", "threePoints", "lineAndPoint", "twoLines", "circleAndPoint", "circleNoCenter"]);
+  const expected: Record<string, [string, string]> = {
+    twoPoints: ["Gegeben: Punkte A und B", "Given: points A and B"],
+    threePoints: ["Gegeben: Punkte A, B und C", "Given: points A, B, and C"],
+    lineAndPoint: ["Gegeben: Gerade g und Punkt P", "Given: line l and point P"],
+    twoLines: ["Gegeben: Gerade g und Gerade h", "Given: line l and line m"],
+    circleAndPoint: ["Gegeben: Punkt M, Kreis k um M und Punkt P", "Given: point M, circle c with center M, and point P"],
+    circleNoCenter: ["Gegeben: Kreis k (Mittelpunkt nicht gegeben)", "Given: circle c (center not given)"],
+  };
+  for (const id of PRESET_IDS) {
+    for (const [i, lang] of (["de", "en"] as const).entries()) {
+      const e = fromPreset(id, lang);
+      assert.equal(e.givenText(lang), expected[id][i], `${id} ${lang}`);
+      assert.equal(e.steps(lang).length, 0);
+      assert.ok(e.active.every((o) => e.derived.get(o.id)!.valid), `${id}: all given objects valid`);
+      assert.equal(e.given, e.cursor);
+    }
+  }
+});
+
+test("two given lines: intersect them, steps start at 1, given objects are protected", () => {
+  const e = fromPreset("twoLines", "de");
+  const [g, h] = ["L1", "L2"];
+  const S = val(e.addIntersection(g, h, 0));
+  assert.equal(e.get(S)!.label, "A", "first free capital letter");
+  assert.equal(e.describeStep(1, "de"), "Schnittpunkt von g und h: Punkt A");
+  assert.equal(e.steps("de")[0].number, 1);
+  assert.equal(e.stepIndex(1), e.given);
+  assert.equal((e.remove(g) as { error: string }).error, "protected");
+  assert.ok(e.isGiven(g) && !e.isGiven(S));
+  // Handles are never offered as existing points, nor listed on the curve as visible points.
+  assert.ok(e.intersections(g, h).every((c) => c.existing === S));
+});
+
+test("circle without center: the hidden center is never an existing point", () => {
+  const e = fromPreset("circleNoCenter", "en");
+  // A point placed exactly at the hidden center is a new, visible point.
+  const Z = e.addFreePoint({ x: 0, y: 0 });
+  assert.ok(Z.ok && !Z.duplicate && e.get(Z.value)!.label === "A");
+  // A line through a point on the circle and that point meets the circle again; nothing reuses handles.
+  const P = val(e.addPointOnCurve("C1", { x: 0, y: 5 }));
+  const l = val(e.addLine(P, Z.value));
+  for (const c of e.intersections("C1", l)) assert.ok(c.existing === undefined || !c.existing.startsWith("H"));
+  assert.ok(!e.isDraggable("H1"));
+});
+
+test("dragging a given line translates it; dependents follow; one undo step", () => {
+  const e = fromPreset("lineAndPoint", "de");
+  const before = e.derived.get("L1")!.line!;
+  const anchors = e.givenAnchors("L1");
+  assert.deepEqual(anchors, ["H1", "H2"]);
+  const F = val(e.addPointOnCurve("L1", { x: 0, y: 0 }));
+  const posF = e.pos(F)!;
+  e.beginMove();
+  e.movePoints(anchors.map((id) => ({ id, pos: { x: e.pos(id)!.x + 1, y: e.pos(id)!.y + 2 } })));
+  e.endMove();
+  const after = e.derived.get("L1")!.line!;
+  assert.ok(Math.abs(after.dir.x - before.dir.x) < 1e-12 && Math.abs(after.dir.y - before.dir.y) < 1e-12, "same direction");
+  assert.ok(Math.abs(e.pos(F)!.x - posF.x - 1) < 1e-9 && Math.abs(e.pos(F)!.y - posF.y - 2) < 1e-9, "point on the line moved along");
+  e.undo();
+  assert.deepEqual(e.pos(F), posF);
+  assert.deepEqual(e.givenAnchors(F), [], "only given curves have anchors");
+});
+
+test("reset to a start configuration is undoable; files keep the configuration", () => {
+  const e = new Engine();
+  val(e.addCircleThrough("A", "B"));
+  e.reset(preset("circleAndPoint").objects);
+  assert.equal(e.given, 5);
+  assert.equal(e.cursor, 5);
+  assert.ok(e.get("M") && !e.get("A"));
+  const k3 = val(e.addCircleThrough("P", "M"));
+  // Save and load (version 2) keeps the start configuration.
+  const f = val(Engine.fromJSON(JSON.stringify(e.toJSON())));
+  assert.equal(f.given, 5);
+  assert.deepEqual(f.steps("de").map((s) => s.objectId), [k3]);
+  assert.deepEqual([...f.derived], [...e.derived]);
+  f.undo();
+  assert.equal(f.cursor, 5, "the start configuration itself is not undoable after loading");
+  f.undo();
+  assert.equal(f.cursor, 5);
+  // Undo in the original engine goes back through the reset to A and B.
+  e.undo(); e.undo();
+  assert.equal(e.given, 2);
+  assert.deepEqual(e.active.map((o) => o.id), ["A", "B", "C1"]);
+  // A version 1 file (before start configurations) still loads with A and B given.
+  const v1 = { ...new Engine().toJSON(), version: 1 } as any;
+  delete v1.given;
+  assert.equal(val(Engine.fromJSON(v1)).given, 2);
+  // Steps must not refer to hidden handles.
+  const bad = fromPreset("circleNoCenter").toJSON() as any;
+  bad.objects.push({ id: "L9", type: "line", label: "g9", def: { p1: "H1", p2: "H2" }, view: { visible: true, color: "#000" } });
+  bad.cursor = bad.objects.length;
+  const r = Engine.fromJSON(bad);
+  assert.ok(!r.ok && /hidden point H1/.test(r.detail ?? ""), JSON.stringify(r));
 });

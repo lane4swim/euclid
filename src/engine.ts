@@ -6,7 +6,7 @@ import {
   intersectLineCircle, intersectLineLine, lineFromPoints, lineParam, onCircle,
   sameCircle, sameLine, samePoint, type Circle, type Line, type Vec,
 } from "./kernel.js";
-import { formatParts, partsToString, type Lang, type TextPart } from "./i18n.js";
+import { formatParts, joinParts, partsToString, type Lang, type TextPart } from "./i18n.js";
 import {
   deps, hasWidth, isCurve, isValidWidth, type CircleDef, type CurveObject, type Derived, type ErrorCode, type GeoObject,
   type ID, type InvalidReason, type LineObject, type ObjectType, type SegmentObject, type PointObject, type Result,
@@ -32,7 +32,7 @@ export type Unsubscribe = () => void;
 
 export interface IntersectionCandidate { pick: 0 | 1; pos: Vec; existing?: ID }
 
-interface Snapshot { objects: GeoObject[]; cursor: number }
+interface Snapshot { objects: GeoObject[]; cursor: number; given: number }
 type HistoryEntry =
   | { kind: "add" }
   | { kind: "snapshot"; before: Snapshot; after: Snapshot };
@@ -59,6 +59,8 @@ function givenPoint(id: "A" | "B", pos: Vec): PointObject {
   return { id, type: "point", label: id, def: { kind: "given", pos: { ...pos } }, view: { visible: true, color: DEFAULT_COLORS.point } };
 }
 
+const isHandle = (o: GeoObject) => o.type === "point" && o.def.kind === "handle";
+
 const ok = <T>(value: T, duplicate?: boolean): Result<T> => (duplicate ? { ok: true, value, duplicate } : { ok: true, value });
 const fail = <T>(error: ErrorCode, ids?: ID[], detail?: string): Result<T> => {
   const r: Result<T> = { ok: false, error };
@@ -71,6 +73,8 @@ export class Engine {
   objects: GeoObject[] = [];
   derived = new Map<ID, Derived>();
   cursor = 0;
+  /** objects[0..given) are the start configuration: given, not constructed, not numbered as steps. */
+  given = 2;
   /** Language used for automatic labels of new lines and circles (g/k vs l/c). */
   labelLang: Lang = "de";
 
@@ -87,6 +91,16 @@ export class Engine {
     this.objects = [givenPoint("A", a), givenPoint("B", b)];
     this.cursor = 2;
     this.recompute();
+  }
+
+  /** A new construction from a start configuration (given objects, e.g. a parsed preset). */
+  static fromStart(start: GeoObject[], lang: Lang = "de"): Engine {
+    const e = new Engine();
+    e.labelLang = lang;
+    e.objects = structuredClone(start);
+    e.cursor = e.given = e.objects.length;
+    e.recompute();
+    return e;
   }
 
   // ---------------------------------------------------------------- queries
@@ -127,19 +141,54 @@ export class Engine {
 
   steps(lang: Lang): StepView[] {
     const out: StepView[] = [];
-    for (let i = 2; i < this.cursor; i++) out.push(this.stepAt(i, lang));
+    for (let i = this.given; i < this.cursor; i++) out.push(this.stepAt(i, lang));
     return out;
   }
 
-  /** Sentence for step `number` (1-based; step n is objects[n + 1]). */
+  /** Index in `objects` of step `number` (1-based): the first step follows the start configuration. */
+  stepIndex(number: number): number { return this.given + number - 1; }
+
+  /** Sentence for step `number` (1-based). */
   describeStep(number: number, lang: Lang): string {
-    const i = number + 1;
-    if (i < 2 || i >= this.cursor) return "";
+    const i = this.stepIndex(number);
+    if (number < 1 || i >= this.cursor) return "";
     return this.stepAt(i, lang).text;
   }
 
+  /** True for objects of the start configuration (given, not constructed). */
+  isGiven(id: ID): boolean {
+    const i = this.indexOf(id);
+    return i >= 0 && i < this.given;
+  }
+
+  /**
+   * "Given: points A and B" / "Given: line g and point P" — the start configuration,
+   * with labels marked as slots. Handles are not mentioned.
+   */
+  givenParts(lang: Lang): TextPart[] {
+    const shown = this.objects.slice(0, this.given).filter((o) => !isHandle(o));
+    if (shown.length > 0 && shown.every((o) => o.type === "point")) {
+      const list = joinParts(lang, shown.map((o) => [{ text: o.label, slot: "label" }]));
+      return formatParts(lang, shown.length === 1 ? "given.point" : "given.points", {}, { list });
+    }
+    const items = shown.map((o): TextPart[] => {
+      switch (o.type) {
+        case "point": return formatParts(lang, "given.item.point", { label: o.label });
+        case "line": return formatParts(lang, "given.item.line", { label: o.label });
+        case "segment": return formatParts(lang, "given.item.segment", { label: o.label });
+        case "circle": {
+          const center = this.get(o.def.center);
+          return center && !isHandle(center)
+            ? formatParts(lang, "given.item.circle", { label: o.label, center: center.label })
+            : formatParts(lang, "given.item.circleNoCenter", { label: o.label });
+        }
+      }
+    });
+    return formatParts(lang, "given.mixed", {}, { list: joinParts(lang, items) });
+  }
+
   givenText(lang: Lang): string {
-    return partsToString(formatParts(lang, "step.given", { a: this.objects[0].label, b: this.objects[1].label }));
+    return partsToString(this.givenParts(lang));
   }
 
   /** All objects that transitively depend on `id` (not including `id`), in list order. */
@@ -286,7 +335,7 @@ export class Engine {
   /** True for points the user may drag: A and B, free points, and points on curves (along their curve). */
   isDraggable(id: ID): boolean {
     const o = this.get(id);
-    return !!o && o.type === "point" && o.def.kind !== "intersection";
+    return !!o && o.type === "point" && o.def.kind !== "intersection" && o.def.kind !== "handle";
   }
 
   /**
@@ -295,29 +344,55 @@ export class Engine {
    * Live during a gesture, otherwise one history entry.
    */
   movePoint(id: ID, pos: Vec): void {
+    this.movePoints([{ id, pos }]);
+  }
+
+  /**
+   * The given points and handles a given line or circle is built from; moving them
+   * all by the same offset translates the curve. Empty for anything else.
+   */
+  givenAnchors(id: ID): ID[] {
     const o = this.get(id);
-    if (!o || o.type !== "point" || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
-    const def = o.def;
-    let apply: (d: PointObject["def"]) => void;
-    if (def.kind === "given" || def.kind === "free") {
-      if (def.pos.x === pos.x && def.pos.y === pos.y) return;
-      apply = (d) => { (d as { pos: Vec }).pos = { x: pos.x, y: pos.y }; };
-    } else if (def.kind === "onCurve") {
-      const c = this.get(def.curve);
-      const frame = c && this.derived.get(def.curve)?.valid ? this.curveFrame(c) : null;
-      if (!frame) return;
-      const t = paramOf(frame, pos);
-      if (t === def.t) return;
-      apply = (d) => { (d as { t: number }).t = t; };
-    } else return;
+    if (!o || o.type === "point" || !this.isGiven(id)) return [];
+    return deps(o).filter((d) => {
+      const p = this.get(d);
+      return p?.type === "point" && (p.def.kind === "given" || p.def.kind === "handle");
+    });
+  }
+
+  /** Move several points at once: one recompute and one event (one history entry outside a gesture). */
+  movePoints(moves: { id: ID; pos: Vec }[]): void {
+    const plans = moves.map((m) => this.planMove(m.id, m.pos)).filter((p): p is NonNullable<typeof p> => p !== null);
+    if (plans.length === 0) return;
+    const ids = plans.map((p) => p.id);
     if (this.gesture) {
-      apply(def);
+      for (const p of plans) p.apply((this.get(p.id) as PointObject).def);
       this.gestureMoved = true;
       this.recompute();
-      this.emit({ kind: "move", ids: [id] });
+      this.emit({ kind: "move", ids });
       return;
     }
-    this.mutate("move", [id], () => apply((this.get(id) as PointObject).def));
+    this.mutate("move", ids, () => { for (const p of plans) p.apply((this.get(p.id) as PointObject).def); });
+  }
+
+  /** How to move one point, or null if it cannot move or would not change. */
+  private planMove(id: ID, pos: Vec): { id: ID; apply: (d: PointObject["def"]) => void } | null {
+    const o = this.get(id);
+    if (!o || o.type !== "point" || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return null;
+    const def = o.def;
+    if (def.kind === "given" || def.kind === "free" || def.kind === "handle") {
+      if (def.pos.x === pos.x && def.pos.y === pos.y) return null;
+      return { id, apply: (d) => { (d as { pos: Vec }).pos = { x: pos.x, y: pos.y }; } };
+    }
+    if (def.kind === "onCurve") {
+      const c = this.get(def.curve);
+      const frame = c && this.derived.get(def.curve)?.valid ? this.curveFrame(c) : null;
+      if (!frame) return null;
+      const t = paramOf(frame, pos);
+      if (t === def.t) return null;
+      return { id, apply: (d) => { (d as { t: number }).t = t; } };
+    }
+    return null;
   }
 
   /** Kept for the spec's API: move A or B. */
@@ -377,7 +452,7 @@ export class Engine {
   remove(id: ID): Result<ID[]> {
     const i = this.indexOf(id);
     if (i < 0) return fail("unknown-id", [id]);
-    if (i < 2) return fail("protected", [id]);
+    if (i < this.given) return fail("protected", [id]);
     const removed = [id, ...this.dependentsOf(id)];
     const gone = new Set(removed);
     this.mutate("remove", removed, () => {
@@ -412,12 +487,15 @@ export class Engine {
     this.emit({ kind: "redo" });
   }
 
-  /** Start a new construction with A and B at their default positions. Undoable. */
-  reset(): void {
+  /**
+   * Start a new construction from a start configuration: the given objects (validated, e.g.
+   * a parsed preset); default: points A and B at their default positions. Undoable.
+   */
+  reset(start?: GeoObject[]): void {
     this.endMove();
     this.mutate("reset", undefined, () => {
-      this.objects = [givenPoint("A", DEFAULT_A), givenPoint("B", DEFAULT_B)];
-      this.cursor = 2;
+      this.objects = start ? structuredClone(start) : [givenPoint("A", DEFAULT_A), givenPoint("B", DEFAULT_B)];
+      this.cursor = this.given = this.objects.length;
     });
   }
 
@@ -426,13 +504,13 @@ export class Engine {
   /** Rebuild every Derived entry in list order, then used points, spans and arcs. */
   recompute(): void {
     const d = new Map<ID, Derived>();
-    // Scene size from the points that carry positions: A, B and free points.
-    const A = this.givenPos(0), B = this.givenPos(1);
-    let size = Math.max(Math.abs(A.x), Math.abs(A.y), Math.abs(B.x), Math.abs(B.y), dist(A, B));
-    for (let i = 2; i < this.cursor; i++) {
+    // Scene size from the points that carry positions: given points, handles and free points.
+    let size = 0;
+    for (let i = 0; i < this.cursor; i++) {
       const def = this.objects[i].def;
-      if ("kind" in def && def.kind === "free") size = Math.max(size, Math.abs(def.pos.x), Math.abs(def.pos.y));
+      if ("pos" in def) size = Math.max(size, Math.abs(def.pos.x), Math.abs(def.pos.y));
     }
+    size *= 2;
     this.eps = epsFor(size);
     this.onTol = Math.max(this.eps * 100, 1e-7 * Math.max(1, size));
     this.derived = d;
@@ -463,6 +541,8 @@ export class Engine {
         const defined = byDef.has(p.id)
           || (p.def.kind === "intersection" && (p.def.a === o.id || p.def.b === o.id))
           || (p.def.kind === "onCurve" && p.def.curve === o.id);
+        // Handles count only for the curve they define (they set a given line's drawn extent).
+        if (p.def.kind === "handle" && !defined) continue;
         let lies = dd.line ? distToLine(dd.line, p.pos) < onTol : onCircle(dd.circle!, p.pos, onTol);
         if (lies && dd.segment && dd.line) {
           const t = lineParam(dd.line, p.pos);
@@ -490,7 +570,7 @@ export class Engine {
   // ------------------------------------------------------------- persistence
 
   toJSON(): SavedFile {
-    return { format: "compass-construction", version: 1, objects: structuredClone(this.objects), cursor: this.cursor };
+    return { format: "compass-construction", version: 2, given: this.given, objects: structuredClone(this.objects), cursor: this.cursor };
   }
 
   /** Parse and validate a saved file (object or JSON text). Rejects the whole file on the first problem. */
@@ -504,8 +584,9 @@ export class Engine {
     const e = new Engine();
     e.objects = v.objects;
     e.cursor = v.cursor;
+    e.given = v.given;
     // Rebuild history so undo/redo of creations work after loading.
-    e.undoStack = Array.from({ length: v.cursor - 2 }, () => ({ kind: "add" as const }));
+    e.undoStack = Array.from({ length: v.cursor - v.given }, () => ({ kind: "add" as const }));
     e.redoStack = Array.from({ length: v.objects.length - v.cursor }, () => ({ kind: "add" as const }));
     e.recompute();
     return ok(e);
@@ -515,6 +596,7 @@ export class Engine {
   load(other: Engine): void {
     this.objects = other.objects;
     this.cursor = other.cursor;
+    this.given = other.given;
     this.undoStack = other.undoStack;
     this.redoStack = other.redoStack;
     this.gesture = null;
@@ -529,12 +611,13 @@ export class Engine {
   }
 
   private snapshot(): Snapshot {
-    return { objects: structuredClone(this.objects), cursor: this.cursor };
+    return { objects: structuredClone(this.objects), cursor: this.cursor, given: this.given };
   }
 
   private restore(s: Snapshot): void {
     this.objects = structuredClone(s.objects);
     this.cursor = s.cursor;
+    this.given = s.given;
   }
 
   private pushEntry(e: HistoryEntry): void {
@@ -614,7 +697,7 @@ export class Engine {
     for (let i = 0; i < this.cursor; i++) {
       const o = this.objects[i];
       const p = this.derived.get(o.id);
-      if (o.type === "point" && p?.valid && p.pos && samePoint(p.pos, pos, this.eps)) return o.id;
+      if (o.type === "point" && !isHandle(o) && p?.valid && p.pos && samePoint(p.pos, pos, this.eps)) return o.id;
     }
     return undefined;
   }
@@ -646,10 +729,6 @@ export class Engine {
     return { kind: "circle", center: circle.center, r: circle.r, a0: Math.atan2(b.y - a.y, b.x - a.x) };
   }
 
-  private givenPos(i: 0 | 1): Vec {
-    const def = this.objects[i].def;
-    return (def as { pos: Vec }).pos;
-  }
 
   private circleOf(def: CircleDef, d: Map<ID, Derived>): Circle | null {
     const center = d.get(def.center)?.pos;
@@ -667,7 +746,7 @@ export class Engine {
     if (deps(o).some((id) => !d.get(id)?.valid)) return { valid: false, reason: "dependency" };
     switch (o.type) {
       case "point": {
-        if (o.def.kind === "given" || o.def.kind === "free") return { valid: true, pos: { ...o.def.pos } };
+        if (o.def.kind === "given" || o.def.kind === "free" || o.def.kind === "handle") return { valid: true, pos: { ...o.def.pos } };
         if (o.def.kind === "onCurve") {
           const frame = this.curveFrame(this.get(o.def.curve)!, d);
           return frame ? { valid: true, pos: pointAt(frame, o.def.t) } : { valid: false, reason: "dependency" };
@@ -713,11 +792,11 @@ export class Engine {
     return false;
   }
 
-  /** C, D, …, Z, then A1, B1, …, Z1, A2, … */
+  /** The first free capital letter (after A and B: C, D, …, Z), then A1, B1, …, Z1, A2, … */
   private nextPointLabel(): string {
     const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     for (let round = 0; ; round++) {
-      for (let i = round === 0 ? 2 : 0; i < 26; i++) {
+      for (let i = 0; i < 26; i++) {
         const l = letters[i] + (round === 0 ? "" : String(round));
         if (!this.labelTaken(l)) return l;
       }
@@ -750,7 +829,7 @@ export class Engine {
           : formatParts(lang, "step.circleRadius", { label: o.label, center: L(o.def.center), r1: L(o.def.r1), r2: L(o.def.r2) });
         break;
       case "point": {
-        if (o.def.kind === "given") { parts = [{ text: o.label, slot: "label" }]; break; }
+        if (o.def.kind === "given" || o.def.kind === "handle") { parts = [{ text: o.label, slot: "label" }]; break; }
         if (o.def.kind === "free") { parts = formatParts(lang, "step.free", { label: o.label }); break; }
         if (o.def.kind === "onCurve") { parts = formatParts(lang, "step.onCurve", { label: o.label, curve: this.label(o.def.curve) }); break; }
         const a = this.get(o.def.a) as CurveObject;
@@ -763,7 +842,7 @@ export class Engine {
       }
     }
     const d = this.derived.get(o.id);
-    const view: StepView = { number: i - 1, objectId: o.id, type: o.type, parts, text: partsToString(parts), valid: !!d?.valid, muted: o.type === "segment" };
+    const view: StepView = { number: i - this.given + 1, objectId: o.id, type: o.type, parts, text: partsToString(parts), valid: !!d?.valid, muted: o.type === "segment" };
     if (d?.reason) view.reason = d.reason;
     return view;
   }
@@ -833,15 +912,20 @@ const isVec = (x: unknown): boolean => isObj(x) && Number.isFinite(x.x) && Numbe
 const isStr = (x: unknown): x is string => typeof x === "string";
 
 /** Returns a cleaned copy of the file, or a message naming the first problem. */
-export function validateFile(data: unknown): { objects: GeoObject[]; cursor: number } | string {
+export function validateFile(data: unknown): { objects: GeoObject[]; cursor: number; given: number } | string {
   if (!isObj(data)) return "not an object";
   if (data.format !== "compass-construction") return "unknown format";
   if (typeof data.version !== "number" || !Number.isInteger(data.version)) return "missing version";
-  if (data.version > 1) return `version ${data.version} is newer than supported (1)`;
+  if (data.version > 2) return `version ${data.version} is newer than supported (2)`;
   if (data.version < 1) return `unknown version ${data.version}`;
   if (!Array.isArray(data.objects)) return "objects missing";
   const raw = data.objects as unknown[];
-  if (raw.length < 2) return "points A and B missing";
+  // Version 1 always starts with the given points A and B; version 2 names the length of the start configuration.
+  const v1 = data.version === 1;
+  if (v1 && raw.length < 2) return "points A and B missing";
+  const given = v1 ? 2 : data.given;
+  if (typeof given !== "number" || !Number.isInteger(given) || given < 1 || given > raw.length) return "given (start configuration) invalid";
+  const handles = new Set<ID>();
 
   const types = new Map<ID, ObjectType>();
   const labels = new Set<string>();
@@ -874,21 +958,28 @@ export function validateFile(data: unknown): { objects: GeoObject[]; cursor: num
       const t = types.get(v);
       if (!t) return `${where} (${id}): ${k} refers to ${v}, which does not appear earlier`;
       if (!want.includes(t)) return `${where} (${id}): ${k} refers to ${v}, which is a ${t}`;
+      if (handles.has(v) && i >= given) return `${where} (${id}): ${k} refers to the hidden point ${v}`;
       return null;
     };
 
-    if (i < 2) {
+    if (v1 && i < 2) {
       const want = i === 0 ? "A" : "B";
       if (id !== want || type !== "point" || def.kind !== "given") return `${where} must be the given point ${want}`;
+    }
+    const inStart = i < given;
+    if (type === "point" && (def.kind === "given" || def.kind === "handle") !== inStart) {
+      return inStart
+        ? `${where} (${id}): the start configuration may only contain given points, handles, lines, circles and segments`
+        : `${where} (${id}): given points must belong to the start configuration`;
     }
 
     let obj: GeoObject;
     if (type === "point") {
-      if (def.kind === "given") {
-        if (i >= 2) return `${where} (${id}): only A and B may be given points`;
+      if (def.kind === "given" || def.kind === "handle") {
         if (!isVec(def.pos)) return `${where} (${id}): position invalid`;
         const p = def.pos as { x: number; y: number };
-        obj = { id, type, label, def: { kind: "given", pos: { x: p.x, y: p.y } }, view: cleanView };
+        obj = { id, type, label, def: { kind: def.kind, pos: { x: p.x, y: p.y } }, view: cleanView };
+        if (def.kind === "handle") handles.add(id);
       } else if (def.kind === "onCurve") {
         const e = ref("curve", ["line", "circle", "segment"]);
         if (e) return e;
@@ -929,6 +1020,6 @@ export function validateFile(data: unknown): { objects: GeoObject[]; cursor: num
   }
 
   const cursor = data.cursor === undefined ? out.length : data.cursor;
-  if (typeof cursor !== "number" || !Number.isInteger(cursor) || cursor < 2 || cursor > out.length) return "cursor invalid";
-  return { objects: out, cursor };
+  if (typeof cursor !== "number" || !Number.isInteger(cursor) || cursor < given || cursor > out.length) return "cursor invalid";
+  return { objects: out, cursor, given };
 }

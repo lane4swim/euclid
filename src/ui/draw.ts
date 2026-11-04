@@ -79,6 +79,56 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
   return `M${f(sx)} ${f(sy)}A${f(r)} ${f(r)} 0 ${large} 0 ${f(ex)} ${f(ey)}`;
 }
 
+const CURVE_LABEL_GAP = 11; // px between a curve and its label's center
+const EDGE = 14;            // keep labels this far inside the drawing
+
+const inside = (p: Vec, w: number, h: number) => p.x >= EDGE && p.x <= w - EDGE && p.y >= EDGE && p.y <= h - EDGE;
+
+/** Label of a line or circle, centered on `at`, in the curve's color. */
+function curveLabel(at: Vec, label: string, color: string, strong: boolean): string {
+  return `<text x="${f(at.x)}" y="${f(at.y)}" fill="${color}" font-family="${FONT}" font-size="14" font-style="italic" text-anchor="middle" dominant-baseline="central"${strong ? ' font-weight="700"' : ""}>${esc(label)}</text>`;
+}
+
+/**
+ * Label position for a drawn line from a to b (screen coordinates): in the overhang near the
+ * b end (lines are drawn past their last point), on the side below the line so it does not
+ * collide with point labels (which sit above right), and inside the drawing. Null if no spot fits.
+ */
+export function lineLabelPos(a: Vec, b: Vec, w: number, h: number): Vec | null {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  if (len < 1) return null;
+  const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+  let nx = -uy, ny = ux;
+  if (ny < 0 || (ny === 0 && nx < 0)) { nx = -nx; ny = -ny; } // the side below (or right of) the line
+  for (let back = 20; back <= len - 20; back += 20) {
+    for (const side of [1, -1]) {
+      const p = { x: b.x - back * ux + side * CURVE_LABEL_GAP * nx, y: b.y - back * uy + side * CURVE_LABEL_GAP * ny };
+      if (inside(p, w, h)) return p;
+    }
+  }
+  return null;
+}
+
+/**
+ * Label position for a circle (screen center and radius): just outside the circle, preferring
+ * the upper right, on the drawn arc in arc mode, and inside the drawing. Null if no spot fits.
+ */
+export function circleLabelPos(c: Vec, r: number, arc: { start: number; end: number } | null, w: number, h: number): Vec | null {
+  const at = (ang: number, out: number) => ({ x: c.x + (r + out) * Math.cos(ang), y: c.y - (r + out) * Math.sin(ang) });
+  const angles: number[] = [];
+  if (arc) {
+    for (let i = 0; i <= 24; i++) angles.push(arc.end - ((arc.end - arc.start) * i) / 24);
+  } else {
+    const base = Math.PI / 4;
+    for (let k = 0; k <= 36; k++) { angles.push(base + (k * Math.PI) / 36); if (k) angles.push(base - (k * Math.PI) / 36); }
+  }
+  for (const out of [CURVE_LABEL_GAP, -CURVE_LABEL_GAP]) {
+    if (r + out <= 0) continue;
+    for (const ang of angles) { const p = at(ang, out); if (inside(p, w, h)) return p; }
+  }
+  return null;
+}
+
 /** Inner SVG markup (no <svg> wrapper). */
 export function drawSVG(e: Engine, o: DrawOptions): string {
   const S = (p: Vec) => toScreen(o.view, o.width, o.height, p);
@@ -122,6 +172,8 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
         const geom = `x1="${f(a.x)}" y1="${f(a.y)}" x2="${f(b.x)}" y2="${f(b.y)}"`;
         if (strong) halos.push(`<line ${geom} stroke="${pal.halo}" stroke-width="${hw}" stroke-linecap="round"/>`);
         curves.push(`<line data-id="${id}" ${geom} stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`);
+        const at = lineLabelPos(a, b, o.width, o.height);
+        if (at) labels.push(curveLabel(at, obj.label, color, strong));
         break;
       }
       case "circle": {
@@ -133,6 +185,8 @@ export function drawSVG(e: Engine, o: DrawOptions): string {
           : `<circle cx="${f(cs.x)}" cy="${f(cs.y)}" r="${f(r)}" fill="none" STROKE/>`;
         if (strong) halos.push(shape.replace("STROKE", `stroke="${pal.halo}" stroke-width="${hw}"`));
         curves.push(shape.replace("STROKE", `data-id="${id}" stroke="${color}" stroke-width="${sw}"`));
+        const at = circleLabelPos(cs, r, arc, o.width, o.height);
+        if (at) labels.push(curveLabel(at, obj.label, color, strong));
         break;
       }
       case "point": {
